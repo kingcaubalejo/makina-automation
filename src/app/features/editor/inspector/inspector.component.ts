@@ -1,0 +1,213 @@
+import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
+import { FormsModule } from '@angular/forms';
+import { EditorStore } from '../../../core/services/editor-store';
+import { PropertiesPanelComponent } from './properties-panel.component';
+import { ConversionPanelComponent } from '../../conversion/conversion-panel.component';
+import { SimulationPanelComponent } from '../../simulation/simulation-panel.component';
+import { RegexPanelComponent } from '../../regex/regex-panel.component';
+import { TestsPanelComponent } from '../../tests/tests-panel.component';
+import { LibraryPanelComponent } from './library-panel.component';
+
+type Tab = 'properties' | 'simulate' | 'convert' | 'regex' | 'tests' | 'library';
+
+@Component({
+  selector: 'app-inspector',
+  standalone: true,
+  imports: [
+    FormsModule,
+    PropertiesPanelComponent,
+    ConversionPanelComponent,
+    SimulationPanelComponent,
+    RegexPanelComponent,
+    TestsPanelComponent,
+    LibraryPanelComponent,
+  ],
+  changeDetection: ChangeDetectionStrategy.OnPush,
+  template: `
+    <aside class="inspector">
+      <nav class="tabs">
+        @for (t of tabs; track t.id) {
+          <button
+            class="tab"
+            [class.active]="active() === t.id"
+            [class.locked]="t.locked"
+            [attr.aria-disabled]="t.locked ? 'true' : null"
+            [attr.tabindex]="t.locked ? -1 : null"
+            (click)="selectTab(t)"
+            [title]="t.locked ? t.label + ' — coming soon' : t.label"
+          >
+            <svg class="tab-icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+              @switch (t.id) {
+                @case ('properties') {
+                  <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.7" />
+                  <line x1="12" y1="8" x2="12" y2="8.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                  <path d="M11 11h1v6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+                }
+                @case ('simulate') {
+                  <path d="M7 5l11 7-11 7V5z" fill="currentColor" stroke="currentColor" stroke-width="1" stroke-linejoin="round" />
+                }
+                @case ('convert') {
+                  <path d="M3 9h13M14 6l3 3-3 3M21 15H8M11 18l-3-3 3-3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
+                }
+                @case ('regex') {
+                  <path d="M12 4v8M9 6l6 4M9 10l6-4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+                  <circle cx="6" cy="18" r="1.6" fill="currentColor" />
+                }
+                @case ('tests') {
+                  <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.7" />
+                  <path d="M8 12l3 3 5-5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
+                }
+                @case ('library') {
+                  <rect x="4" y="4" width="16" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.7" />
+                  <line x1="9" y1="4" x2="9" y2="20" stroke="currentColor" stroke-width="1.7" />
+                  <line x1="14" y1="4" x2="14" y2="20" stroke="currentColor" stroke-width="1.7" />
+                }
+              }
+            </svg>
+            <span class="label">{{ t.label }}</span>
+            @if (t.locked) {
+              <span class="soon" aria-label="coming soon">soon</span>
+            }
+          </button>
+        }
+      </nav>
+
+      <div class="content">
+        @switch (active()) {
+          @case ('properties') { <app-properties-panel /> }
+          @case ('simulate')   { <app-simulation-panel /> }
+          @case ('convert')    { <app-conversion-panel /> }
+          @case ('regex')      { <app-regex-panel /> }
+          @case ('tests')      { <app-tests-panel /> }
+          @case ('library')    { <app-library-panel /> }
+        }
+      </div>
+
+      <div class="status">
+        @if (validation().errors.length) {
+          @for (e of validation().errors; track e) {
+            <div class="status-row error">{{ e }}</div>
+          }
+        } @else if (!validation().isDfa) {
+          <div class="status-row info">NFA — alphabet: {{ alphabetLabel() }}</div>
+        } @else {
+          <div class="status-row ok">DFA — alphabet: {{ alphabetLabel() }}</div>
+        }
+      </div>
+    </aside>
+  `,
+  styles: [
+    `
+      .inspector {
+        width: 360px;
+        flex-shrink: 0;
+        background: var(--surface);
+        border-left: 1px solid var(--border);
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+      }
+      .tabs {
+        display: grid;
+        grid-template-columns: repeat(6, 1fr);
+        gap: 2px;
+        padding: 8px;
+        background: var(--surface);
+        border-bottom: 1px solid var(--border);
+      }
+      .tab .label {
+        font-size: 10px;
+      }
+      .tab {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+        padding: 8px 4px;
+        background: transparent;
+        border: none;
+        border-radius: 8px;
+        font-size: 11px;
+        font-weight: 500;
+        color: var(--text-muted);
+        transition: background 120ms, color 120ms;
+      }
+      .tab-icon {
+        width: 16px;
+        height: 16px;
+        display: block;
+        flex-shrink: 0;
+      }
+      .tab:hover { background: var(--surface-2); color: var(--text); }
+      .tab.active {
+        background: var(--accent-soft);
+        color: var(--accent);
+      }
+      .tab.locked {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+      .tab.locked:hover {
+        background: transparent;
+        color: var(--text-muted);
+      }
+      .soon {
+        position: absolute;
+        top: 2px;
+        right: 2px;
+        font-size: 8px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        background: var(--surface-2);
+        color: var(--text-muted);
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 1px 5px;
+        line-height: 1;
+      }
+      .content {
+        flex: 1;
+        overflow-y: auto;
+      }
+      .status {
+        border-top: 1px solid var(--border);
+        padding: 8px 14px;
+        background: var(--surface-2);
+      }
+      .status-row {
+        font-size: 12px;
+        color: var(--text-muted);
+      }
+      .status-row.error { color: var(--danger); }
+      .status-row.ok    { color: var(--success); }
+      .status-row.info  { color: var(--accent); }
+    `,
+  ],
+})
+export class InspectorComponent {
+  protected readonly store = inject(EditorStore);
+  protected readonly active = signal<Tab>('properties');
+
+  protected readonly tabs: Array<{ id: Tab; label: string; locked?: boolean }> = [
+    { id: 'properties', label: 'Inspect'                 },
+    { id: 'simulate',   label: 'Simulate'                },
+    { id: 'convert',    label: 'Convert',  locked: true  },
+    { id: 'regex',      label: 'Regex',    locked: true  },
+    { id: 'tests',      label: 'Tests',    locked: true  },
+    { id: 'library',    label: 'Library',  locked: true  },
+  ];
+
+  protected selectTab(t: { id: Tab; locked?: boolean }): void {
+    if (t.locked) return;
+    this.active.set(t.id);
+  }
+
+  protected readonly validation = computed(() => this.store.validation());
+  protected readonly alphabetLabel = computed(() => {
+    const a = this.store.alphabet();
+    return a.length ? a.join(', ') : '∅';
+  });
+}
+

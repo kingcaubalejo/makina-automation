@@ -1,0 +1,17 @@
+:host { display: block; height: 100%; }
+
+.shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.main {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+app-canvas { flex: 1; min-width: 0; position: relative; }

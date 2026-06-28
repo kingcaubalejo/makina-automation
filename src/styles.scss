@@ -1,0 +1,123 @@
+@use "tailwindcss";
+
+:root {
+  color-scheme: light;
+
+  /* paper / ink palette (matches the folio landing) */
+  --paper:        #f7f3e8;
+  --paper-2:      #efeadc;
+  --paper-edge:   #e3dcc6;
+  --ink:          #181818;
+  --ink-2:        #4a4a4a;
+  --ink-3:        #7a7568;
+  --rule:         #d8cfb8;
+  --rule-strong:  #c4b896;
+  --accent:       #2c54b0;
+  --accent-2:     #b13a32;
+  --accent-soft:  #e6ecfa;
+  --margin-red:   #b13a32;
+  --success:      #4f7d3a;
+  --warning:      #b08327;
+  --danger:       #b13a32;
+
+  /* semantic aliases used throughout the components */
+  --bg:            var(--paper);
+  --surface:       #fdfaf1;
+  --surface-2:     var(--paper-2);
+  --border:        var(--rule);
+  --border-strong: var(--rule-strong);
+  --text:          var(--ink);
+  --text-muted:    var(--ink-2);
+
+  --shadow:    0 1px 1px rgba(60, 50, 30, 0.04), 0 4px 16px rgba(60, 50, 30, 0.06);
+  --shadow-lg: 0 8px 28px rgba(60, 50, 30, 0.18);
+  --radius:    6px;
+  --radius-sm: 4px;
+  --grid-color:        rgba(120, 100, 60, 0.10);
+  --grid-color-strong: rgba(120, 100, 60, 0.20);
+
+  --serif: "Newsreader", ui-serif, Georgia, "Times New Roman", serif;
+  --sans:  "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --mono:  "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --paper:        #1b1812;
+  --paper-2:      #221f17;
+  --paper-edge:   #2c281e;
+  --ink:          #ece6d6;
+  --ink-2:        #b0a994;
+  --ink-3:        #87806d;
+  --rule:         #3a342a;
+  --rule-strong:  #4d4636;
+  --accent:       #7e9bdc;
+  --accent-soft:  #1c243f;
+  --margin-red:   #d8675b;
+  --success:      #7eaa64;
+  --warning:      #d8a955;
+  --danger:       #d8675b;
+
+  --bg:            var(--paper);
+  --surface:       #211e16;
+  --surface-2:     var(--paper-2);
+  --border:        var(--rule);
+  --border-strong: var(--rule-strong);
+  --text:          var(--ink);
+  --text-muted:    var(--ink-2);
+
+  --shadow:        0 1px 2px rgba(0, 0, 0, 0.4), 0 6px 22px rgba(0, 0, 0, 0.45);
+  --shadow-lg:     0 14px 36px rgba(0, 0, 0, 0.55);
+  --grid-color:        rgba(255, 240, 200, 0.05);
+  --grid-color-strong: rgba(255, 240, 200, 0.10);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  height: 100%;
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-feature-settings: "kern", "liga", "cv02", "cv03", "cv11";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* paper interference pattern — fixed across the app, multiplies under the UI */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background-image:
+    repeating-linear-gradient(0deg, rgba(180, 160, 110, 0.045) 0 1px, transparent 1px 36px);
+  pointer-events: none;
+  z-index: 0;
+  mix-blend-mode: multiply;
+}
+[data-theme="dark"] body::before {
+  background-image:
+    repeating-linear-gradient(0deg, rgba(255, 240, 200, 0.025) 0 1px, transparent 1px 36px);
+  mix-blend-mode: screen;
+}
+
+app-root { position: relative; z-index: 1; display: block; height: 100%; }
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+input, textarea, select {
+  font-family: inherit;
+  color: inherit;
+}
+
+::selection {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
