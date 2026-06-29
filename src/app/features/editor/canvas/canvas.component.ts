@@ -38,10 +38,10 @@ const ACCEPT_GAP = 4;
       class="canvas-host"
       #host
       (wheel)="onWheel($event)"
-      (mousedown)="onCanvasMouseDown($event)"
-      (mousemove)="onCanvasMouseMove($event)"
-      (mouseup)="onCanvasMouseUp($event)"
-      (mouseleave)="onCanvasMouseUp($event)"
+      (pointerdown)="onCanvasPointerDown($event)"
+      (pointermove)="onCanvasPointerMove($event)"
+      (pointerup)="onCanvasPointerUp($event)"
+      (pointercancel)="onCanvasPointerUp($event)"
       (dblclick)="onDoubleClick($event)"
       (contextmenu)="onContextMenu($event)"
       [class.tool-state]="store.tool() === 'state'"
@@ -90,7 +90,7 @@ const ACCEPT_GAP = 4;
             <g
               class="transition"
               [class.selected]="isTransitionSelected(rt.t.id)"
-              (mousedown)="onTransitionMouseDown($event, rt.t.id)"
+              (pointerdown)="onTransitionPointerDown($event, rt.t.id)"
             >
               <path class="hit" [attr.d]="rt.path" />
               <path class="line" [attr.d]="rt.path" />
@@ -131,7 +131,7 @@ const ACCEPT_GAP = 4;
               [class.active]="store.activeStates().has(s.id)"
               [class.start]="s.isStart"
               [attr.transform]="'translate(' + s.x + ',' + s.y + ')'"
-              (mousedown)="onStateMouseDown($event, s.id)"
+              (pointerdown)="onStatePointerDown($event, s.id)"
               (dblclick)="onStateDoubleClick($event, s.id)"
             >
               @if (s.isStart) {
@@ -192,7 +192,7 @@ const ACCEPT_GAP = 4;
           class="ctx-menu"
           [style.left.px]="cm.x"
           [style.top.px]="cm.y"
-          (mousedown)="$event.stopPropagation()"
+          (pointerdown)="$event.stopPropagation()"
         >
           <button class="ctx-item" (click)="ctxMakeStart(cm.stateId)">
             <span class="ctx-icon">▶</span> Mark as start <span class="ctx-kbd">G</span>
@@ -240,6 +240,7 @@ const ACCEPT_GAP = 4;
         inset: 0;
         background: var(--bg);
         cursor: default;
+        touch-action: none;
       }
       .canvas-host.tool-state { cursor: crosshair; }
       .canvas-host.tool-pan { cursor: grab; }
@@ -657,9 +658,9 @@ export class CanvasComponent {
     this.store.zoomBy(factor, ev.clientX - rect.left, ev.clientY - rect.top);
   }
 
-  protected onCanvasMouseDown(ev: MouseEvent): void {
+  protected onCanvasPointerDown(ev: PointerEvent): void {
     if (this.contextMenu()) this.contextMenu.set(null);
-    if (ev.button !== 0) return;
+    if (ev.button !== 0 || !ev.isPrimary) return;
     const target = ev.target as Element;
     const onState = target.closest('.state');
     const onTransition = target.closest('.transition');
@@ -682,6 +683,7 @@ export class CanvasComponent {
         vx: this.store.viewport().x,
         vy: this.store.viewport().y,
       };
+      this.capturePointer(ev);
       return;
     }
 
@@ -694,10 +696,11 @@ export class CanvasComponent {
       if (!ev.shiftKey) this.store.clearSelection();
       this.dragState = { kind: 'marquee', startX: world.x, startY: world.y };
       this.marquee.set({ x0: world.x, y0: world.y, x1: world.x, y1: world.y });
+      this.capturePointer(ev);
     }
   }
 
-  protected onCanvasMouseMove(ev: MouseEvent): void {
+  protected onCanvasPointerMove(ev: PointerEvent): void {
     const world = this.toWorld(ev);
     this.cursorWorld = world;
 
@@ -739,7 +742,7 @@ export class CanvasComponent {
     }
   }
 
-  protected onCanvasMouseUp(_ev: MouseEvent): void {
+  protected onCanvasPointerUp(_ev: PointerEvent): void {
     if (!this.dragState) return;
     if (this.dragState.kind === 'marquee') {
       const m = this.marquee();
@@ -771,8 +774,8 @@ export class CanvasComponent {
     this.dragState = null;
   }
 
-  protected onStateMouseDown(ev: MouseEvent, id: string): void {
-    if (ev.button !== 0) return;
+  protected onStatePointerDown(ev: PointerEvent, id: string): void {
+    if (ev.button !== 0 || !ev.isPrimary) return;
     ev.stopPropagation();
 
     const tool = this.store.tool();
@@ -818,6 +821,7 @@ export class CanvasComponent {
         original,
         moved: false,
       };
+      this.capturePointer(ev);
     }
   }
 
@@ -836,8 +840,8 @@ export class CanvasComponent {
     }
   }
 
-  protected onTransitionMouseDown(ev: MouseEvent, id: string): void {
-    if (ev.button !== 0) return;
+  protected onTransitionPointerDown(ev: PointerEvent, id: string): void {
+    if (ev.button !== 0 || !ev.isPrimary) return;
     ev.stopPropagation();
     if (this.store.tool() === 'erase') {
       this.store.selectOnly([], [id]);
@@ -969,6 +973,14 @@ export class CanvasComponent {
       x: (ev.clientX - rect.left - v.x) / v.scale,
       y: (ev.clientY - rect.top - v.y) / v.scale,
     };
+  }
+
+  private capturePointer(ev: PointerEvent): void {
+    try {
+      this.host().nativeElement.setPointerCapture(ev.pointerId);
+    } catch {
+      // older browsers or detached elements — fall back to bubble-based events
+    }
   }
 
   @HostListener('window:keydown', ['$event'])
