@@ -24,7 +24,12 @@ import { SimulationResult, simulate } from '../../core/algorithms/simulate';
         <input
           class="input"
           type="text"
-          [ngModel]="inputValue()"
+          inputmode="text"
+          autocomplete="off"
+          autocorrect="off"
+          autocapitalize="off"
+          spellcheck="false"
+          [ngModel]="store.simulationInput()"
           (ngModelChange)="setInput($event)"
           placeholder="e.g. abba"
         />
@@ -107,12 +112,13 @@ import { SimulationResult, simulate } from '../../core/algorithms/simulate';
         margin: 0;
       }
       .input {
+        width: 100%;
         height: 38px;
         border-radius: 8px;
         border: 1px solid var(--border);
         background: var(--surface-2);
         padding: 0 12px;
-        font-size: 14px;
+        font-size: 16px;
         font-family: ui-monospace, "SF Mono", Menlo, monospace;
         outline: none;
       }
@@ -219,16 +225,15 @@ import { SimulationResult, simulate } from '../../core/algorithms/simulate';
 export class SimulationPanelComponent implements OnDestroy {
   protected readonly store = inject(EditorStore);
 
-  protected readonly inputValue = signal('');
   protected readonly cursor = signal(0);
   protected readonly running = signal(false);
 
-  protected readonly chars = computed(() => [...this.inputValue()]);
+  protected readonly chars = computed(() => [...this.store.simulationInput()]);
   protected readonly hasStart = computed(() => this.store.validation().hasStart);
 
   protected readonly result = computed<SimulationResult | null>(() => {
     if (!this.store.validation().hasStart) return null;
-    return simulate(this.store.automaton(), this.inputValue());
+    return simulate(this.store.automaton(), this.store.simulationInput());
   });
 
   protected readonly atEnd = computed(() => {
@@ -268,7 +273,7 @@ export class SimulationPanelComponent implements OnDestroy {
     });
 
     effect(() => {
-      this.inputValue();
+      this.store.simulationInput();
       this.store.automaton();
       untracked(() => {
         const r = this.result();
@@ -283,7 +288,7 @@ export class SimulationPanelComponent implements OnDestroy {
   }
 
   protected setInput(value: string): void {
-    this.inputValue.set(value);
+    this.store.simulationInput.set(value);
     this.cursor.set(0);
     this.running.set(false);
     this.clearTimer();

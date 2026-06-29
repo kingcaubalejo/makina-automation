@@ -248,6 +248,11 @@ interface ToolDef {
         background: var(--border);
         margin: 0 6px;
       }
+      @media (max-width: 900px) {
+        .tool-btn .label { display: none; }
+        .tool-btn { padding: 6px 8px; }
+        .divider { margin: 0 2px; }
+      }
     `,
   ],
 })

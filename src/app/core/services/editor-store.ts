@@ -55,6 +55,7 @@ export class EditorStore {
   readonly theme = signal<'light' | 'dark'>(this.readInitialTheme());
   readonly workspaceId = signal<string>(this.readWorkspaceIdFromUrl());
   readonly workspaceName = signal<string>('Untitled');
+  readonly simulationInput = signal<string>('');
 
   readonly automaton = computed<Automaton>(() => ({
     states: this.states(),
@@ -350,6 +351,7 @@ export class EditorStore {
     this.transitions.set([]);
     this.clearSelection();
     this.activeStates.set(new Set());
+    this.simulationInput.set('');
   }
 
   tidyLayout(): void {
