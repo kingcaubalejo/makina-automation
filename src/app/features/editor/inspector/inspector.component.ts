@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { EditorStore } from '../../../core/services/editor-store';
+import { AuthService } from '../../../core/services/auth.service';
 import { PropertiesPanelComponent } from './properties-panel.component';
 import { ConversionPanelComponent } from '../../conversion/conversion-panel.component';
 import { SimulationPanelComponent } from '../../simulation/simulation-panel.component';
@@ -188,6 +189,7 @@ type Tab = 'properties' | 'simulate' | 'convert' | 'regex' | 'tests' | 'library'
 })
 export class InspectorComponent {
   protected readonly store = inject(EditorStore);
+  protected readonly auth = inject(AuthService);
   protected readonly active = signal<Tab>('properties');
 
   protected readonly tabs: Array<{ id: Tab; label: string; locked?: boolean }> = [
@@ -201,6 +203,7 @@ export class InspectorComponent {
 
   protected selectTab(t: { id: Tab; locked?: boolean }): void {
     if (t.locked) return;
+    if (t.id === 'simulate' && !this.auth.requireAuth()) return;
     this.active.set(t.id);
   }
 
