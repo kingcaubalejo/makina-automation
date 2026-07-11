@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 import { EditorStore, Tool } from '../../../core/services/editor-store';
+import { WorkbookMenuComponent } from './workbook-menu.component';
 
 interface ToolDef {
   id: Tool;
@@ -10,6 +11,7 @@ interface ToolDef {
 @Component({
   selector: 'app-toolbar',
   standalone: true,
+  imports: [WorkbookMenuComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="toolbar">
@@ -23,16 +25,19 @@ interface ToolDef {
         </svg>
         <div class="brand-text">
           <strong>Makina</strong>
-          <input
-            class="workspace-name"
-            type="text"
-            [value]="store.workspaceName()"
-            (input)="onWorkspaceInput($event)"
-            (blur)="onWorkspaceBlur($event)"
-            spellcheck="false"
-            aria-label="Workspace name"
-            title="Workspace name (rename this window)"
-          />
+          <div class="workspace-row">
+            <input
+              class="workspace-name"
+              type="text"
+              [value]="store.workspaceName()"
+              (input)="onWorkspaceInput($event)"
+              (blur)="onWorkspaceBlur($event)"
+              spellcheck="false"
+              aria-label="Workbook name"
+              title="Workbook name"
+            />
+            <app-workbook-menu />
+          </div>
         </div>
       </div>
 
@@ -73,14 +78,6 @@ interface ToolDef {
       <div class="spacer"></div>
 
       <div class="actions">
-        <button class="ghost" (click)="store.openNewWindow()" title="Open a new workspace in a new window">
-          <svg class="icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-            <rect x="4" y="6" width="14" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.7" />
-            <path d="M14 10h6V4h-6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
-            <path d="M16 6l4 -4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
-          </svg>
-        </button>
-        <span class="divider"></span>
         <button class="ghost" (click)="store.undo()" [disabled]="!store.canUndo()" title="Undo (⌘Z)">
           <svg class="icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
             <path d="M9 14l-4-4 4-4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
@@ -155,6 +152,11 @@ interface ToolDef {
         font-size: 11px;
         color: var(--text-muted);
         margin-top: 2px;
+      }
+      .workspace-row {
+        display: inline-flex;
+        align-items: center;
+        gap: 0;
       }
       .workspace-name {
         font-family: "Newsreader", ui-serif, Georgia, serif;

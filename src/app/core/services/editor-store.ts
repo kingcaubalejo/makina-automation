@@ -1,4 +1,4 @@
-import { computed, effect, Injectable, signal } from '@angular/core';
+import { computed, effect, inject, Injectable, signal } from '@angular/core';
 import {
   Automaton,
   AutomatonState,
@@ -13,6 +13,7 @@ import {
   alphabetOf,
 } from '../models/automaton';
 import { autoLayout } from '../algorithms/auto-layout';
+import { WorkbookService } from './workbook-service';
 
 export type Tool = 'select' | 'state' | 'transition' | 'pan' | 'erase';
 
@@ -79,8 +80,11 @@ export class EditorStore {
   private docTimer: ReturnType<typeof setTimeout> | undefined;
   private nameTimer: ReturnType<typeof setTimeout> | undefined;
 
+  private readonly workbooks = inject(WorkbookService);
+
   constructor() {
     this.load();
+    void this.workbooks.ensure(this.workspaceId(), this.workspaceName());
     effect(() => {
       // touch signals so the effect re-runs on change
       this.states();
@@ -129,6 +133,15 @@ export class EditorStore {
     const id = 'w_' + Math.random().toString(36).slice(2, 9);
     const url = window.location.pathname + (window.location.search ?? '') + '#w=' + id;
     window.open(url, '_blank', 'noopener');
+  }
+
+  switchTo(id: string): void {
+    if (typeof window === 'undefined') return;
+    if (id === this.workspaceId()) return;
+    this.flushDoc();
+    this.flushName();
+    window.location.hash = 'w=' + encodeURIComponent(id);
+    window.location.reload();
   }
 
   workspaceStorageKey(suffix: string): string {
@@ -442,6 +455,7 @@ export class EditorStore {
     } catch {
       // ignore quota
     }
+    void this.workbooks.touch(this.workspaceId());
   }
 
   private flushName(): void {
@@ -454,6 +468,7 @@ export class EditorStore {
     } catch {
       // ignore quota
     }
+    void this.workbooks.rename(this.workspaceId(), this.workspaceName());
   }
 
   private load(): void {
