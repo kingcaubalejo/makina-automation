@@ -10,6 +10,7 @@ import {
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { EditorStore } from '../../core/services/editor-store';
+import { AuthService, FREE_SIMULATIONS } from '../../core/services/auth.service';
 import { SimulationResult, simulate } from '../../core/algorithms/simulate';
 
 @Component({
@@ -58,9 +59,76 @@ import { SimulationResult, simulate } from '../../core/algorithms/simulate';
             {{ running() ? 'Pause' : 'Run' }}
           </button>
         </div>
+        @if (!auth.isAuthenticated()) {
+          <aside
+            class="callout"
+            [class.locked]="auth.remainingSimulations() === 0"
+            role="note"
+          >
+            <span class="callout-icon" aria-hidden="true">
+              @if (auth.remainingSimulations() > 0) {
+                <svg viewBox="0 0 24 24" width="16" height="16">
+                  <path
+                    d="M12 3l2.5 5.5L20 9l-4 4 1 6-5-3-5 3 1-6-4-4 5.5-.5L12 3z"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.6"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              } @else {
+                <svg viewBox="0 0 24 24" width="16" height="16">
+                  <path
+                    d="M6 10V8a6 6 0 1112 0v2"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.6"
+                    stroke-linecap="round"
+                  />
+                  <rect
+                    x="4.5"
+                    y="10"
+                    width="15"
+                    height="10.5"
+                    rx="2"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.6"
+                  />
+                </svg>
+              }
+            </span>
+            <div class="callout-body">
+              @if (auth.remainingSimulations() > 0) {
+                <div class="callout-head">
+                  <span class="callout-title">Free trial</span>
+                  <span class="pips" aria-hidden="true">
+                    @for (i of pips; track i) {
+                      <span class="pip" [class.used]="i >= auth.remainingSimulations()"></span>
+                    }
+                  </span>
+                </div>
+                <p class="callout-text">
+                  {{ auth.remainingSimulations() }} of {{ freeSimulations }} runs left.
+                  <button class="link" type="button" (click)="auth.openModal()">Sign in</button>
+                  for unlimited simulations.
+                </p>
+              } @else {
+                <div class="callout-head">
+                  <span class="callout-title">Trial ended</span>
+                </div>
+                <p class="callout-text">
+                  You've used all {{ freeSimulations }} free runs.
+                  <button class="link" type="button" (click)="auth.openModal()">Sign in or create an account</button>
+                  to keep simulating.
+                </p>
+              }
+            </div>
+          </aside>
+        }
       </section>
 
-      @if (result(); as r) {
+      @if (started() && result(); as r) {
         <section>
           <h3>Trace</h3>
           <div class="trace">
@@ -71,7 +139,7 @@ import { SimulationResult, simulate } from '../../core/algorithms/simulate';
                 <span class="active-set">{{ activeLabels(s.active) }}</span>
               </div>
             }
-            @if (r.rejectedAt !== undefined) {
+            @if (r.rejectedAt !== undefined && cursor() >= r.rejectedAt) {
               <div class="step rejected">
                 <span class="idx">·</span>
                 <span class="consumed">stuck</span>
@@ -83,13 +151,13 @@ import { SimulationResult, simulate } from '../../core/algorithms/simulate';
 
         <section>
           <h3>Result</h3>
-          <div class="verdict" [class.accept]="r.accepted" [class.reject]="!r.accepted && atEnd()">
+          <div class="verdict" [class.accept]="r.accepted && atEnd()" [class.reject]="!r.accepted && atEnd()">
             <span class="dot"></span>
             <strong>{{ verdictLabel() }}</strong>
             <span class="muted">@ position {{ cursor() }} / {{ chars().length }}</span>
           </div>
         </section>
-      } @else {
+      } @else if (!result()) {
         <section class="empty">
           <p>
             Define a start state and accept state, then enter input above to simulate
@@ -219,14 +287,105 @@ import { SimulationResult, simulate } from '../../core/algorithms/simulate';
       .verdict .muted { color: var(--text-muted); margin-left: auto; font-size: 12px; }
 
       .empty p { font-size: 13px; color: var(--text-muted); line-height: 1.45; margin: 0; }
+
+      .callout {
+        display: flex;
+        gap: 10px;
+        align-items: flex-start;
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: color-mix(in srgb, var(--accent-soft) 55%, var(--surface));
+        color: var(--text);
+      }
+      .callout.locked {
+        background: color-mix(in srgb, var(--danger) 10%, var(--surface-2));
+        border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+      }
+      .callout-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 26px;
+        height: 26px;
+        border-radius: 8px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        color: var(--accent);
+        flex-shrink: 0;
+        margin-top: 1px;
+      }
+      .callout.locked .callout-icon {
+        color: var(--danger);
+        border-color: color-mix(in srgb, var(--danger) 40%, var(--border));
+      }
+      .callout-body {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        min-width: 0;
+        flex: 1;
+      }
+      .callout-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      .callout-title {
+        font-family: var(--serif);
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 0.005em;
+        color: var(--text);
+      }
+      .callout.locked .callout-title { color: var(--danger); }
+      .callout-text {
+        margin: 0;
+        font-size: 12px;
+        line-height: 1.45;
+        color: var(--text-muted);
+      }
+      .pips {
+        display: inline-flex;
+        gap: 4px;
+      }
+      .pip {
+        width: 7px;
+        height: 7px;
+        border-radius: 999px;
+        background: var(--accent);
+        border: 1px solid var(--accent);
+      }
+      .pip.used {
+        background: transparent;
+        border-color: color-mix(in srgb, var(--text-muted) 55%, transparent);
+      }
+      .link {
+        background: none;
+        border: none;
+        padding: 0;
+        color: var(--accent);
+        font: inherit;
+        cursor: pointer;
+        text-decoration: underline;
+        text-underline-offset: 2px;
+        text-decoration-thickness: 1px;
+      }
+      .callout.locked .link { color: var(--danger); }
+      .link:hover { filter: brightness(1.15); }
     `,
   ],
 })
 export class SimulationPanelComponent implements OnDestroy {
   protected readonly store = inject(EditorStore);
+  protected readonly auth = inject(AuthService);
+  protected readonly freeSimulations = FREE_SIMULATIONS;
+  protected readonly pips = Array.from({ length: FREE_SIMULATIONS }, (_, i) => i);
 
   protected readonly cursor = signal(0);
   protected readonly running = signal(false);
+  protected readonly started = signal(false);
 
   protected readonly chars = computed(() => [...this.store.simulationInput()]);
   protected readonly hasStart = computed(() => this.store.validation().hasStart);
@@ -254,7 +413,8 @@ export class SimulationPanelComponent implements OnDestroy {
     const r = this.result();
     if (!r) return '';
     if (this.atEnd()) return r.accepted ? 'Accepted' : 'Rejected';
-    return 'Running…';
+    if (this.running()) return 'Running…';
+    return 'Paused';
   });
 
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -263,7 +423,8 @@ export class SimulationPanelComponent implements OnDestroy {
     effect(() => {
       const r = this.result();
       const idx = this.cursor();
-      if (!r) {
+      const started = this.started();
+      if (!r || !started) {
         this.store.clearActiveStates();
         return;
       }
@@ -283,6 +444,7 @@ export class SimulationPanelComponent implements OnDestroy {
           this.running.set(false);
           this.clearTimer();
         }
+        this.started.set(false);
       });
     });
   }
@@ -291,18 +453,21 @@ export class SimulationPanelComponent implements OnDestroy {
     this.store.simulationInput.set(value);
     this.cursor.set(0);
     this.running.set(false);
+    this.started.set(false);
     this.clearTimer();
   }
 
   protected reset(): void {
     this.cursor.set(0);
     this.running.set(false);
+    this.started.set(false);
     this.clearTimer();
   }
 
   protected step(): void {
     const r = this.result();
     if (!r) return;
+    this.started.set(true);
     const next = Math.min(this.cursor() + 1, r.steps.length - 1);
     this.cursor.set(next);
     if (next >= r.steps.length - 1) {
@@ -318,7 +483,9 @@ export class SimulationPanelComponent implements OnDestroy {
       return;
     }
     if (!this.canRun()) return;
+    if (!this.auth.tryConsumeSimulation()) return;
     if (this.atEnd()) this.cursor.set(0);
+    this.started.set(true);
     this.running.set(true);
     this.timer = setInterval(() => {
       if (!this.canStep()) {

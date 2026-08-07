@@ -1,4 +1,5 @@
 import {
+  afterNextRender,
   ChangeDetectionStrategy,
   Component,
   computed,
@@ -51,13 +52,6 @@ const ACCEPT_GAP = 4;
     >
       <svg class="canvas" [attr.viewBox]="viewBox()" preserveAspectRatio="xMidYMid meet">
         <defs>
-          <pattern id="grid-small" width="20" height="20" patternUnits="userSpaceOnUse">
-            <path d="M 20 0 L 0 0 0 20" fill="none" stroke="var(--grid-color)" stroke-width="1" />
-          </pattern>
-          <pattern id="grid-large" width="100" height="100" patternUnits="userSpaceOnUse">
-            <rect width="100" height="100" fill="url(#grid-small)" />
-            <path d="M 100 0 L 0 0 0 100" fill="none" stroke="var(--grid-color-strong)" stroke-width="1" />
-          </pattern>
           <marker
             id="arrow"
             viewBox="0 0 12 12"
@@ -81,8 +75,6 @@ const ACCEPT_GAP = 4;
             <path d="M 0 0 L 12 6 L 0 12 z" fill="var(--accent)" />
           </marker>
         </defs>
-
-        <rect class="grid" x="-5000" y="-5000" width="10000" height="10000" fill="url(#grid-large)" />
 
         <!-- transitions layer -->
         <g class="transitions">
@@ -218,7 +210,7 @@ const ACCEPT_GAP = 4;
             <div class="empty-title">Start building your automaton</div>
             <div class="empty-body">
               Pick the <strong>State</strong> tool and click anywhere, or load a sample from the
-              right panel. Use the <strong>Transition</strong> tool to draw arrows by clicking
+              side panel. Use the <strong>Transition</strong> tool to draw arrows by clicking
               two states in turn.
             </div>
           </div>
@@ -336,8 +328,6 @@ const ACCEPT_GAP = 4;
         stroke: var(--accent);
         stroke-dasharray: 4 4;
       }
-      .grid { pointer-events: none; }
-
       .hud {
         position: absolute;
         bottom: 16px;
@@ -481,6 +471,16 @@ export class CanvasComponent {
     | { kind: 'pan'; startX: number; startY: number; vx: number; vy: number }
     | { kind: 'marquee'; startX: number; startY: number }
     | null = null;
+
+  constructor() {
+    afterNextRender(() => {
+      const v = this.store.viewport();
+      if (v.x === 0 && v.y === 0 && v.scale === 1 && this.store.states().length === 0) {
+        const rect = this.host().nativeElement.getBoundingClientRect();
+        this.store.setViewport({ x: rect.width / 2, y: rect.height / 2 });
+      }
+    });
+  }
 
   protected readonly viewBox = computed(() => {
     const v = this.store.viewport();
@@ -950,7 +950,8 @@ export class CanvasComponent {
     this.store.zoomBy(1 / 1.2, rect.width / 2, rect.height / 2);
   }
   protected resetView(): void {
-    this.store.resetViewport();
+    const rect = this.host().nativeElement.getBoundingClientRect();
+    this.store.setViewport({ x: rect.width / 2, y: rect.height / 2, scale: 1 });
   }
 
   protected async deleteAll(): Promise<void> {

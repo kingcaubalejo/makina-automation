@@ -7,7 +7,7 @@ import {
   signal,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { AuthService } from '../../core/services/auth.service';
+import { AuthService, FREE_SIMULATIONS } from '../../core/services/auth.service';
 
 type Mode = 'login' | 'register';
 type LoginMethod = 'password' | 'phone' | 'google';
@@ -22,14 +22,29 @@ type LoginMethod = 'password' | 'phone' | 'google';
       <div class="backdrop" (mousedown)="close()">
         <div class="modal" role="dialog" aria-modal="true" (mousedown)="$event.stopPropagation()">
           <header class="head">
-            <h2>{{ mode() === 'login' ? 'Sign in to simulate' : 'Create your account' }}</h2>
+            <div class="head-text">
+              <span class="eyebrow">Automata Studio</span>
+              <h2>{{ mode() === 'login' ? 'Sign in to keep simulating' : 'Create your account' }}</h2>
+            </div>
             <button class="close" (click)="close()" aria-label="Close">×</button>
           </header>
 
-          <p class="hint">
-            You need to be signed in to run simulations. This is a mock — credentials
-            are stored locally in your browser.
-          </p>
+          <aside class="callout" role="note">
+            <span class="callout-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="16" height="16">
+                <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.6" />
+                <line x1="12" y1="8" x2="12" y2="8.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                <path d="M11 11h1v6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+              </svg>
+            </span>
+            <div class="callout-body">
+              <p>
+                You've used your <strong>{{ freeSimulations }} free simulations</strong>. Sign in or create an
+                account to run unlimited simulations.
+              </p>
+              <p class="mock-note">Mock backend — credentials are stored locally in your browser.</p>
+            </div>
+          </aside>
 
           <nav class="mode-tabs">
             <button
@@ -213,11 +228,11 @@ type LoginMethod = 'password' | 'phone' | 'google';
       .modal {
         background: var(--surface);
         color: var(--text);
-        border: 1px solid var(--border);
+        border: 1px solid var(--border-strong);
         border-radius: 14px;
         box-shadow: var(--shadow-lg);
         width: min(94vw, 440px);
-        padding: 20px 22px 20px;
+        padding: 22px 22px 20px;
         display: flex;
         flex-direction: column;
         gap: 14px;
@@ -228,11 +243,25 @@ type LoginMethod = 'password' | 'phone' | 'google';
         justify-content: space-between;
         gap: 8px;
       }
+      .head-text {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      .eyebrow {
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.16em;
+        color: var(--margin-red);
+      }
       h2 {
-        font-size: 16px;
+        font-family: var(--serif);
+        font-size: 22px;
         font-weight: 600;
         margin: 0;
-        line-height: 1.25;
+        line-height: 1.15;
+        letter-spacing: -0.005em;
       }
       .close {
         width: 26px;
@@ -246,11 +275,45 @@ type LoginMethod = 'password' | 'phone' | 'google';
         margin: -4px -6px 0 0;
       }
       .close:hover { background: var(--surface-2); color: var(--text); }
-      .hint {
+      .callout {
+        display: flex;
+        gap: 10px;
+        align-items: flex-start;
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: color-mix(in srgb, var(--accent-soft) 55%, var(--surface));
+      }
+      .callout-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 26px;
+        height: 26px;
+        border-radius: 8px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        color: var(--accent);
+        flex-shrink: 0;
+        margin-top: 1px;
+      }
+      .callout-body {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        min-width: 0;
+      }
+      .callout-body p {
         margin: 0;
-        color: var(--text-muted);
-        font-size: 12px;
+        color: var(--text);
+        font-size: 12.5px;
         line-height: 1.5;
+      }
+      .callout-body strong { font-weight: 600; }
+      .mock-note {
+        color: var(--text-muted);
+        font-size: 11px !important;
+        font-style: italic;
       }
       .mode-tabs {
         display: grid;
@@ -382,6 +445,7 @@ type LoginMethod = 'password' | 'phone' | 'google';
 })
 export class AuthModalComponent {
   protected readonly auth = inject(AuthService);
+  protected readonly freeSimulations = FREE_SIMULATIONS;
 
   protected readonly mode = signal<Mode>('login');
   protected readonly method = signal<LoginMethod>('password');
