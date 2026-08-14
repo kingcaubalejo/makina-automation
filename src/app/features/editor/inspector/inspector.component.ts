@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { EditorStore } from '../../../core/services/editor-store';
+import { AuthService } from '../../../core/services/auth.service';
 import { PropertiesPanelComponent } from './properties-panel.component';
 import { ConversionPanelComponent } from '../../conversion/conversion-panel.component';
 import { SimulationPanelComponent } from '../../simulation/simulation-panel.component';
@@ -9,6 +10,12 @@ import { TestsPanelComponent } from '../../tests/tests-panel.component';
 import { LibraryPanelComponent } from './library-panel.component';
 
 type Tab = 'properties' | 'simulate' | 'convert' | 'regex' | 'tests' | 'library';
+
+interface TabDef {
+  id: Tab;
+  label: string;
+  requiresAuth?: boolean;
+}
 
 @Component({
   selector: 'app-inspector',
@@ -30,12 +37,11 @@ type Tab = 'properties' | 'simulate' | 'convert' | 'regex' | 'tests' | 'library'
           <button
             class="tab"
             [class.active]="active() === t.id"
-            [class.locked]="t.locked"
+            [class.locked]="isLocked(t)"
             [attr.aria-selected]="active() === t.id"
-            [attr.aria-disabled]="t.locked ? 'true' : null"
-            [attr.tabindex]="t.locked ? -1 : null"
+            [attr.aria-disabled]="isLocked(t) ? 'true' : null"
             (click)="selectTab(t)"
-            [title]="t.locked ? t.label + ' — coming soon' : t.label"
+            [title]="tooltip(t)"
             role="tab"
           >
             <svg class="tab-icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
@@ -66,8 +72,13 @@ type Tab = 'properties' | 'simulate' | 'convert' | 'regex' | 'tests' | 'library'
                 }
               }
             </svg>
-            @if (t.locked) {
-              <span class="soon-dot" aria-label="coming soon" title="Coming soon"></span>
+            @if (isLocked(t)) {
+              <span class="lock-badge" aria-label="Sign in to unlock" title="Sign in to unlock">
+                <svg viewBox="0 0 24 24" width="9" height="9" aria-hidden="true">
+                  <rect x="6" y="11" width="12" height="9" rx="2" fill="currentColor" />
+                  <path d="M8 11V8a4 4 0 018 0v3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                </svg>
+              </span>
             }
           </button>
         }
@@ -155,17 +166,23 @@ type Tab = 'properties' | 'simulate' | 'convert' | 'regex' | 'tests' | 'library'
         color: var(--accent);
         box-shadow: var(--shadow);
       }
-      .tab.locked { opacity: 0.45; cursor: not-allowed; }
-      .tab.locked:hover { background: transparent; color: var(--text-muted); }
-      .soon-dot {
+      .tab.locked { opacity: 0.55; cursor: pointer; }
+      .tab.locked:hover { background: var(--surface); color: var(--text); opacity: 0.75; }
+      .lock-badge {
         position: absolute;
-        top: 4px;
-        right: 4px;
-        width: 5px;
-        height: 5px;
+        top: 2px;
+        right: 2px;
+        width: 13px;
+        height: 13px;
         border-radius: 999px;
-        background: var(--text-muted);
+        background: var(--surface);
+        border: 1px solid var(--border);
+        color: var(--text-muted);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
       }
+      .tab.locked:hover .lock-badge { color: var(--accent); border-color: var(--accent); }
       .tab-label {
         font-family: var(--serif);
         font-style: italic;
@@ -214,19 +231,31 @@ type Tab = 'properties' | 'simulate' | 'convert' | 'regex' | 'tests' | 'library'
 })
 export class InspectorComponent {
   protected readonly store = inject(EditorStore);
+  protected readonly auth = inject(AuthService);
   protected readonly active = signal<Tab>('properties');
 
-  protected readonly tabs: Array<{ id: Tab; label: string; locked?: boolean }> = [
-    { id: 'properties', label: 'Inspect'                 },
-    { id: 'simulate',   label: 'Simulate'                },
-    { id: 'convert',    label: 'Convert',  locked: true  },
-    { id: 'regex',      label: 'Regex',    locked: true  },
-    { id: 'tests',      label: 'Tests',    locked: true  },
-    { id: 'library',    label: 'Library',  locked: true  },
+  protected readonly tabs: TabDef[] = [
+    { id: 'properties', label: 'Inspect'                      },
+    { id: 'simulate',   label: 'Simulate'                     },
+    { id: 'convert',    label: 'Convert', requiresAuth: true  },
+    { id: 'regex',      label: 'Regex',   requiresAuth: true  },
+    { id: 'tests',      label: 'Tests',   requiresAuth: true  },
+    { id: 'library',    label: 'Library', requiresAuth: true  },
   ];
 
-  protected selectTab(t: { id: Tab; locked?: boolean }): void {
-    if (t.locked) return;
+  protected isLocked(t: TabDef): boolean {
+    return !!t.requiresAuth && !this.auth.isAuthenticated();
+  }
+
+  protected tooltip(t: TabDef): string {
+    return this.isLocked(t) ? `${t.label} — sign in to unlock` : t.label;
+  }
+
+  protected selectTab(t: TabDef): void {
+    if (this.isLocked(t)) {
+      this.auth.openModal();
+      return;
+    }
     this.active.set(t.id);
   }
 

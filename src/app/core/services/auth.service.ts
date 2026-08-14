@@ -1,32 +1,49 @@
-import { Injectable, computed, signal } from '@angular/core';
+import { Injectable, computed, inject, signal } from '@angular/core';
 import * as amplitude from '@amplitude/unified';
+import type { Clerk } from '@clerk/clerk-js';
+import { ClerkService } from './clerk.service';
 
-export interface RegisteredUser {
+export interface AuthUser {
   email: string;
   phone: string;
   firstName: string;
   lastName: string;
-  password: string;
-  provider: 'password' | 'google' | 'phone';
 }
 
-export interface AuthSession {
-  token: string;
-  user: Omit<RegisteredUser, 'password'>;
-}
-
-const USERS_KEY = 'automata_studio__users';
-const SESSION_KEY = 'automata_studio__session';
+export type AuthResult = { ok: true } | { ok: false; error: string };
 
 @Injectable({ providedIn: 'root' })
 export class AuthService {
-  private readonly _session = signal<AuthSession | null>(loadSession());
-  private readonly _modalOpen = signal(false);
+  private readonly clerkService = inject(ClerkService);
 
-  readonly session = this._session.asReadonly();
+  private readonly _user = signal<AuthUser | null>(null);
+  private readonly _modalOpen = signal(false);
+  private readonly _ready = signal(false);
+  private readonly _loadError = signal<string | null>(null);
+  private clerk: Clerk | null = null;
+
+  readonly user = this._user.asReadonly();
   readonly modalOpen = this._modalOpen.asReadonly();
-  readonly isAuthenticated = computed(() => this._session() !== null);
-  readonly currentUser = computed(() => this._session()?.user ?? null);
+  readonly ready = this._ready.asReadonly();
+  readonly loadError = this._loadError.asReadonly();
+  readonly isAuthenticated = computed(() => this._user() !== null);
+  readonly currentUser = computed(() => this._user());
+
+  constructor() {
+    this.clerkService
+      .load()
+      .then((clerk) => {
+        this.clerk = clerk;
+        this.syncUser();
+        clerk.addListener(() => this.syncUser());
+        this._ready.set(true);
+      })
+      .catch((err) => {
+        const message = clerkErrorMessage(err);
+        console.error('Clerk failed to load:', err);
+        this._loadError.set(message);
+      });
+  }
 
   requireAuth(): boolean {
     if (this.isAuthenticated()) return true;
@@ -42,138 +59,195 @@ export class AuthService {
     this._modalOpen.set(false);
   }
 
-  logout(): void {
-    this._session.set(null);
-    localStorage.removeItem(SESSION_KEY);
+  async logout(): Promise<void> {
+    if (!this.clerk) return;
+    await this.clerk.signOut();
     amplitude.track('Signed Out');
     amplitude.setUserId(undefined);
   }
 
-  register(input: {
+  async loginWithPassword(email: string, password: string): Promise<AuthResult> {
+    const clerk = this.clerk;
+    if (!clerk) return this.notReadyResult();
+    try {
+      const attempt = await clerk.client!.signIn.create({
+        identifier: email.trim().toLowerCase(),
+        password,
+        strategy: 'password',
+      });
+      if (attempt.status === 'complete') {
+        await clerk.setActive({ session: attempt.createdSessionId });
+        this.trackSignIn('password');
+        return { ok: true };
+      }
+      return { ok: false, error: 'Additional verification required to complete sign-in.' };
+    } catch (err) {
+      return { ok: false, error: clerkErrorMessage(err) };
+    }
+  }
+
+  async startPhoneLogin(phone: string): Promise<AuthResult> {
+    const clerk = this.clerk;
+    if (!clerk) return this.notReadyResult();
+    try {
+      await clerk.client!.signIn.create({
+        strategy: 'phone_code',
+        identifier: normalizePhone(phone),
+      });
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: clerkErrorMessage(err) };
+    }
+  }
+
+  async verifyPhoneCode(code: string): Promise<AuthResult> {
+    const clerk = this.clerk;
+    if (!clerk) return this.notReadyResult();
+    const signIn = clerk.client?.signIn;
+    if (!signIn) return { ok: false, error: 'Phone login was not started. Please request a new code.' };
+    try {
+      const attempt = await signIn.attemptFirstFactor({ strategy: 'phone_code', code });
+      if (attempt.status === 'complete') {
+        await clerk.setActive({ session: attempt.createdSessionId });
+        this.trackSignIn('phone');
+        return { ok: true };
+      }
+      return { ok: false, error: 'Verification incomplete.' };
+    } catch (err) {
+      return { ok: false, error: clerkErrorMessage(err) };
+    }
+  }
+
+  async loginWithGoogle(): Promise<AuthResult> {
+    const clerk = this.clerk;
+    if (!clerk) return this.notReadyResult();
+    try {
+      const returnUrl = window.location.origin + window.location.pathname;
+      await clerk.client!.signIn.authenticateWithRedirect({
+        strategy: 'oauth_google',
+        redirectUrl: returnUrl,
+        redirectUrlComplete: returnUrl,
+      });
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: clerkErrorMessage(err) };
+    }
+  }
+
+  async register(input: {
     email: string;
     phone: string;
     firstName: string;
     lastName: string;
     password: string;
-  }): { ok: true } | { ok: false; error: string } {
-    const users = loadUsers();
-    const email = input.email.trim().toLowerCase();
-    const phone = normalizePhone(input.phone);
-
-    if (users.some((u) => u.email === email)) {
-      return { ok: false, error: 'An account with this email already exists.' };
+  }): Promise<AuthResult> {
+    const clerk = this.clerk;
+    if (!clerk) return this.notReadyResult();
+    try {
+      await clerk.client!.signUp.create({
+        emailAddress: input.email.trim().toLowerCase(),
+        password: input.password,
+        firstName: input.firstName.trim(),
+        lastName: input.lastName.trim(),
+        phoneNumber: input.phone ? normalizePhone(input.phone) : undefined,
+      });
+      await clerk.client!.signUp.prepareEmailAddressVerification({ strategy: 'email_code' });
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: clerkErrorMessage(err) };
     }
-    if (users.some((u) => u.phone === phone)) {
-      return { ok: false, error: 'An account with this phone number already exists.' };
-    }
-
-    const user: RegisteredUser = {
-      email,
-      phone,
-      firstName: input.firstName.trim(),
-      lastName: input.lastName.trim(),
-      password: input.password,
-      provider: 'password',
-    };
-    users.push(user);
-    saveUsers(users);
-    this.startSession(user);
-    amplitude.track('Signed Up', { provider: user.provider });
-    return { ok: true };
   }
 
-  loginWithPassword(email: string, password: string): { ok: true } | { ok: false; error: string } {
-    const users = loadUsers();
-    const normalized = email.trim().toLowerCase();
-    const user = users.find((u) => u.email === normalized);
-    if (!user || user.password !== password) {
-      return { ok: false, error: 'Invalid email or password.' };
+  async verifySignupEmail(code: string): Promise<AuthResult> {
+    const clerk = this.clerk;
+    if (!clerk) return this.notReadyResult();
+    const signUp = clerk.client?.signUp;
+    if (!signUp) return { ok: false, error: 'No signup in progress. Please start over.' };
+    try {
+      const attempt = await signUp.attemptEmailAddressVerification({ code });
+      if (attempt.status === 'complete') {
+        await clerk.setActive({ session: attempt.createdSessionId });
+        amplitude.track('Signed Up', { provider: 'password' });
+        this.trackSignIn('password');
+        return { ok: true };
+      }
+      return { ok: false, error: 'Verification incomplete.' };
+    } catch (err) {
+      return { ok: false, error: clerkErrorMessage(err) };
     }
-    this.startSession(user);
-    return { ok: true };
   }
 
-  loginWithPhone(phone: string, code: string): { ok: true } | { ok: false; error: string } {
-    if (code !== '000000') {
-      return { ok: false, error: 'Invalid verification code. Hint: 000000 for mock.' };
+  async startForgotPassword(email: string): Promise<AuthResult> {
+    const clerk = this.clerk;
+    if (!clerk) return this.notReadyResult();
+    try {
+      await clerk.client!.signIn.create({
+        strategy: 'reset_password_email_code',
+        identifier: email.trim().toLowerCase(),
+      });
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: clerkErrorMessage(err) };
     }
-    const users = loadUsers();
-    const normalized = normalizePhone(phone);
-    let user = users.find((u) => u.phone === normalized);
-    if (!user) {
-      user = {
-        email: `${normalized}@phone.local`,
-        phone: normalized,
-        firstName: 'Phone',
-        lastName: 'User',
-        password: '',
-        provider: 'phone',
-      };
-      users.push(user);
-      saveUsers(users);
+  }
+
+  async resetPassword(code: string, newPassword: string): Promise<AuthResult> {
+    const clerk = this.clerk;
+    if (!clerk) return this.notReadyResult();
+    const signIn = clerk.client?.signIn;
+    if (!signIn) return { ok: false, error: 'No password reset in progress. Please start over.' };
+    try {
+      const attempt = await signIn.attemptFirstFactor({
+        strategy: 'reset_password_email_code',
+        code,
+        password: newPassword,
+      });
+      if (attempt.status === 'complete') {
+        await clerk.setActive({ session: attempt.createdSessionId });
+        this.trackSignIn('password');
+        return { ok: true };
+      }
+      return { ok: false, error: 'Password reset incomplete.' };
+    } catch (err) {
+      return { ok: false, error: clerkErrorMessage(err) };
     }
-    this.startSession(user);
-    return { ok: true };
   }
 
-  loginWithGoogle(): { ok: true } | { ok: false; error: string } {
-    const mockEmail = 'mock.google.user@gmail.com';
-    const users = loadUsers();
-    let user = users.find((u) => u.email === mockEmail);
-    if (!user) {
-      user = {
-        email: mockEmail,
-        phone: '',
-        firstName: 'Google',
-        lastName: 'User',
-        password: '',
-        provider: 'google',
-      };
-      users.push(user);
-      saveUsers(users);
+  async handleRedirectCallback(): Promise<void> {
+    const clerk = this.clerk ?? (await this.clerkService.load());
+    this.clerk = clerk;
+    try {
+      await clerk.handleRedirectCallback({});
+      this.trackSignIn('google');
+    } catch (err) {
+      console.error('OAuth redirect callback failed', err);
     }
-    this.startSession(user);
-    return { ok: true };
   }
 
-  private startSession(user: RegisteredUser): void {
-    const session: AuthSession = {
-      token: mockJwt(user),
-      user: {
-        email: user.email,
-        phone: user.phone,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        provider: user.provider,
-      },
-    };
-    this._session.set(session);
-    localStorage.setItem(SESSION_KEY, JSON.stringify(session));
-    this._modalOpen.set(false);
-    amplitude.setUserId(user.email);
-    amplitude.track('Signed In', { provider: user.provider });
+  private notReadyResult(): AuthResult {
+    const err = this._loadError();
+    if (err) return { ok: false, error: `Clerk failed to load: ${err}` };
+    return { ok: false, error: 'Auth is still loading. Try again in a moment.' };
   }
-}
 
-function loadUsers(): RegisteredUser[] {
-  try {
-    const raw = localStorage.getItem(USERS_KEY);
-    return raw ? (JSON.parse(raw) as RegisteredUser[]) : [];
-  } catch {
-    return [];
+  private syncUser(): void {
+    const u = this.clerk?.user;
+    if (!u) {
+      this._user.set(null);
+      return;
+    }
+    this._user.set({
+      email: u.primaryEmailAddress?.emailAddress ?? '',
+      phone: u.primaryPhoneNumber?.phoneNumber ?? '',
+      firstName: u.firstName ?? '',
+      lastName: u.lastName ?? '',
+    });
   }
-}
 
-function saveUsers(users: RegisteredUser[]): void {
-  localStorage.setItem(USERS_KEY, JSON.stringify(users));
-}
-
-function loadSession(): AuthSession | null {
-  try {
-    const raw = localStorage.getItem(SESSION_KEY);
-    return raw ? (JSON.parse(raw) as AuthSession) : null;
-  } catch {
-    return null;
+  private trackSignIn(provider: string): void {
+    const email = this.clerk?.user?.primaryEmailAddress?.emailAddress;
+    if (email) amplitude.setUserId(email);
+    amplitude.track('Signed In', { provider });
   }
 }
 
@@ -181,21 +255,11 @@ function normalizePhone(phone: string): string {
   return phone.replace(/[^\d+]/g, '');
 }
 
-function mockJwt(user: RegisteredUser): string {
-  const header = base64UrlEncode(JSON.stringify({ alg: 'none', typ: 'JWT' }));
-  const payload = base64UrlEncode(
-    JSON.stringify({
-      sub: user.email,
-      email: user.email,
-      phone: user.phone,
-      name: `${user.firstName} ${user.lastName}`.trim(),
-      provider: user.provider,
-      iat: Math.floor(Date.now() / 1000),
-    }),
-  );
-  return `${header}.${payload}.mock-signature`;
-}
-
-function base64UrlEncode(value: string): string {
-  return btoa(value).replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
+function clerkErrorMessage(err: unknown): string {
+  const anyErr = err as { errors?: Array<{ code?: string; message?: string; longMessage?: string }>; message?: string };
+  const first = anyErr?.errors?.[0];
+  if (first?.longMessage) return first.longMessage;
+  if (first?.message) return first.message;
+  if (anyErr?.message) return anyErr.message;
+  return 'Something went wrong. Please try again.';
 }
