@@ -9,8 +9,8 @@ import {
   untracked,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import * as amplitude from '@amplitude/unified';
 import { EditorStore } from '../../core/services/editor-store';
-import { AuthService, FREE_SIMULATIONS } from '../../core/services/auth.service';
 import { SimulationResult, simulate } from '../../core/algorithms/simulate';
 
 @Component({
@@ -52,80 +52,13 @@ import { SimulationResult, simulate } from '../../core/algorithms/simulate';
         <h3>Controls</h3>
         <div class="controls">
           <button class="btn" (click)="reset()" [disabled]="!hasStart()">Reset</button>
-          <button class="btn" (click)="step()" [disabled]="!canStep()">
+          <button class="btn" (click)="onStepClick()" [disabled]="!canStep()">
             Step
           </button>
           <button class="btn primary" (click)="toggleRun()" [disabled]="!canRun()">
             {{ running() ? 'Pause' : 'Run' }}
           </button>
         </div>
-        @if (!auth.isAuthenticated()) {
-          <aside
-            class="callout"
-            [class.locked]="auth.remainingSimulations() === 0"
-            role="note"
-          >
-            <span class="callout-icon" aria-hidden="true">
-              @if (auth.remainingSimulations() > 0) {
-                <svg viewBox="0 0 24 24" width="16" height="16">
-                  <path
-                    d="M12 3l2.5 5.5L20 9l-4 4 1 6-5-3-5 3 1-6-4-4 5.5-.5L12 3z"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.6"
-                    stroke-linejoin="round"
-                  />
-                </svg>
-              } @else {
-                <svg viewBox="0 0 24 24" width="16" height="16">
-                  <path
-                    d="M6 10V8a6 6 0 1112 0v2"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.6"
-                    stroke-linecap="round"
-                  />
-                  <rect
-                    x="4.5"
-                    y="10"
-                    width="15"
-                    height="10.5"
-                    rx="2"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.6"
-                  />
-                </svg>
-              }
-            </span>
-            <div class="callout-body">
-              @if (auth.remainingSimulations() > 0) {
-                <div class="callout-head">
-                  <span class="callout-title">Free trial</span>
-                  <span class="pips" aria-hidden="true">
-                    @for (i of pips; track i) {
-                      <span class="pip" [class.used]="i >= auth.remainingSimulations()"></span>
-                    }
-                  </span>
-                </div>
-                <p class="callout-text">
-                  {{ auth.remainingSimulations() }} of {{ freeSimulations }} runs left.
-                  <button class="link" type="button" (click)="auth.openModal()">Sign in</button>
-                  for unlimited simulations.
-                </p>
-              } @else {
-                <div class="callout-head">
-                  <span class="callout-title">Trial ended</span>
-                </div>
-                <p class="callout-text">
-                  You've used all {{ freeSimulations }} free runs.
-                  <button class="link" type="button" (click)="auth.openModal()">Sign in or create an account</button>
-                  to keep simulating.
-                </p>
-              }
-            </div>
-          </aside>
-        }
       </section>
 
       @if (started() && result(); as r) {
@@ -287,101 +220,11 @@ import { SimulationResult, simulate } from '../../core/algorithms/simulate';
       .verdict .muted { color: var(--text-muted); margin-left: auto; font-size: 12px; }
 
       .empty p { font-size: 13px; color: var(--text-muted); line-height: 1.45; margin: 0; }
-
-      .callout {
-        display: flex;
-        gap: 10px;
-        align-items: flex-start;
-        padding: 10px 12px;
-        border-radius: 10px;
-        border: 1px solid var(--border);
-        background: color-mix(in srgb, var(--accent-soft) 55%, var(--surface));
-        color: var(--text);
-      }
-      .callout.locked {
-        background: color-mix(in srgb, var(--danger) 10%, var(--surface-2));
-        border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
-      }
-      .callout-icon {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 26px;
-        height: 26px;
-        border-radius: 8px;
-        background: var(--surface);
-        border: 1px solid var(--border);
-        color: var(--accent);
-        flex-shrink: 0;
-        margin-top: 1px;
-      }
-      .callout.locked .callout-icon {
-        color: var(--danger);
-        border-color: color-mix(in srgb, var(--danger) 40%, var(--border));
-      }
-      .callout-body {
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-        min-width: 0;
-        flex: 1;
-      }
-      .callout-head {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 8px;
-      }
-      .callout-title {
-        font-family: var(--serif);
-        font-size: 13px;
-        font-weight: 600;
-        letter-spacing: 0.005em;
-        color: var(--text);
-      }
-      .callout.locked .callout-title { color: var(--danger); }
-      .callout-text {
-        margin: 0;
-        font-size: 12px;
-        line-height: 1.45;
-        color: var(--text-muted);
-      }
-      .pips {
-        display: inline-flex;
-        gap: 4px;
-      }
-      .pip {
-        width: 7px;
-        height: 7px;
-        border-radius: 999px;
-        background: var(--accent);
-        border: 1px solid var(--accent);
-      }
-      .pip.used {
-        background: transparent;
-        border-color: color-mix(in srgb, var(--text-muted) 55%, transparent);
-      }
-      .link {
-        background: none;
-        border: none;
-        padding: 0;
-        color: var(--accent);
-        font: inherit;
-        cursor: pointer;
-        text-decoration: underline;
-        text-underline-offset: 2px;
-        text-decoration-thickness: 1px;
-      }
-      .callout.locked .link { color: var(--danger); }
-      .link:hover { filter: brightness(1.15); }
     `,
   ],
 })
 export class SimulationPanelComponent implements OnDestroy {
   protected readonly store = inject(EditorStore);
-  protected readonly auth = inject(AuthService);
-  protected readonly freeSimulations = FREE_SIMULATIONS;
-  protected readonly pips = Array.from({ length: FREE_SIMULATIONS }, (_, i) => i);
 
   protected readonly cursor = signal(0);
   protected readonly running = signal(false);
@@ -458,10 +301,23 @@ export class SimulationPanelComponent implements OnDestroy {
   }
 
   protected reset(): void {
+    amplitude.track('Reset Simulation', {
+      input: this.store.simulationInput(),
+      cursor_position: this.cursor(),
+      was_running: this.running(),
+    });
     this.cursor.set(0);
     this.running.set(false);
     this.started.set(false);
     this.clearTimer();
+  }
+
+  protected onStepClick(): void {
+    amplitude.track('Stepped Simulation', {
+      input: this.store.simulationInput(),
+      from_position: this.cursor(),
+    });
+    this.step();
   }
 
   protected step(): void {
@@ -473,6 +329,13 @@ export class SimulationPanelComponent implements OnDestroy {
     if (next >= r.steps.length - 1) {
       this.running.set(false);
       this.clearTimer();
+      amplitude.track('Simulation Finished', {
+        input: this.store.simulationInput(),
+        input_length: this.store.simulationInput().length,
+        states_count: this.store.states().length,
+        accepted: r.accepted,
+        total_steps: r.steps.length,
+      });
     }
   }
 
@@ -480,13 +343,23 @@ export class SimulationPanelComponent implements OnDestroy {
     if (this.running()) {
       this.running.set(false);
       this.clearTimer();
+      amplitude.track('Paused Simulation', {
+        input: this.store.simulationInput(),
+        cursor_position: this.cursor(),
+      });
       return;
     }
     if (!this.canRun()) return;
-    if (!this.auth.tryConsumeSimulation()) return;
     if (this.atEnd()) this.cursor.set(0);
     this.started.set(true);
     this.running.set(true);
+    const r = this.result();
+    amplitude.track('Ran Simulation', {
+      input: this.store.simulationInput(),
+      input_length: this.store.simulationInput().length,
+      states_count: this.store.states().length,
+      accepted: r?.accepted ?? null,
+    });
     this.timer = setInterval(() => {
       if (!this.canStep()) {
         this.running.set(false);

@@ -7,7 +7,7 @@ import {
   signal,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { AuthService, FREE_SIMULATIONS } from '../../core/services/auth.service';
+import { AuthService } from '../../core/services/auth.service';
 
 type Mode = 'login' | 'register';
 type LoginMethod = 'password' | 'phone' | 'google';
@@ -24,7 +24,7 @@ type LoginMethod = 'password' | 'phone' | 'google';
           <header class="head">
             <div class="head-text">
               <span class="eyebrow">Automata Studio</span>
-              <h2>{{ mode() === 'login' ? 'Sign in to keep simulating' : 'Create your account' }}</h2>
+              <h2>{{ mode() === 'login' ? 'Sign in to save your work' : 'Create your account' }}</h2>
             </div>
             <button class="close" (click)="close()" aria-label="Close">×</button>
           </header>
@@ -32,15 +32,14 @@ type LoginMethod = 'password' | 'phone' | 'google';
           <aside class="callout" role="note">
             <span class="callout-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24" width="16" height="16">
-                <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.6" />
-                <line x1="12" y1="8" x2="12" y2="8.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-                <path d="M11 11h1v6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+                <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
+                <path d="M17 21v-8H7v8M7 3v5h8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
               </svg>
             </span>
             <div class="callout-body">
               <p>
-                You've used your <strong>{{ freeSimulations }} free simulations</strong>. Sign in or create an
-                account to run unlimited simulations.
+                Simulations are always free. Sign in to <strong>save projects</strong> and
+                <strong>export</strong> your work.
               </p>
               <p class="mock-note">Mock backend — credentials are stored locally in your browser.</p>
             </div>
@@ -445,7 +444,6 @@ type LoginMethod = 'password' | 'phone' | 'google';
 })
 export class AuthModalComponent {
   protected readonly auth = inject(AuthService);
-  protected readonly freeSimulations = FREE_SIMULATIONS;
 
   protected readonly mode = signal<Mode>('login');
   protected readonly method = signal<LoginMethod>('password');

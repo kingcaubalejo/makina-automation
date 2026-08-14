@@ -1,4 +1,5 @@
 import { Injectable, computed, signal } from '@angular/core';
+import * as amplitude from '@amplitude/unified';
 
 export interface RegisteredUser {
   email: string;
@@ -16,44 +17,21 @@ export interface AuthSession {
 
 const USERS_KEY = 'automata_studio__users';
 const SESSION_KEY = 'automata_studio__session';
-const SIM_COUNT_KEY = 'automata_studio__sim_count';
-
-export const FREE_SIMULATIONS = 3;
 
 @Injectable({ providedIn: 'root' })
 export class AuthService {
   private readonly _session = signal<AuthSession | null>(loadSession());
   private readonly _modalOpen = signal(false);
-  private readonly _simulationCount = signal(loadSimulationCount());
 
   readonly session = this._session.asReadonly();
   readonly modalOpen = this._modalOpen.asReadonly();
   readonly isAuthenticated = computed(() => this._session() !== null);
   readonly currentUser = computed(() => this._session()?.user ?? null);
-  readonly simulationCount = this._simulationCount.asReadonly();
-  readonly remainingSimulations = computed(() =>
-    Math.max(0, FREE_SIMULATIONS - this._simulationCount()),
-  );
-  readonly hasFreeSimulations = computed(
-    () => this.isAuthenticated() || this._simulationCount() < FREE_SIMULATIONS,
-  );
 
   requireAuth(): boolean {
     if (this.isAuthenticated()) return true;
     this._modalOpen.set(true);
     return false;
-  }
-
-  tryConsumeSimulation(): boolean {
-    if (this.isAuthenticated()) return true;
-    if (this._simulationCount() >= FREE_SIMULATIONS) {
-      this._modalOpen.set(true);
-      return false;
-    }
-    const next = this._simulationCount() + 1;
-    this._simulationCount.set(next);
-    localStorage.setItem(SIM_COUNT_KEY, String(next));
-    return true;
   }
 
   openModal(): void {
@@ -67,6 +45,8 @@ export class AuthService {
   logout(): void {
     this._session.set(null);
     localStorage.removeItem(SESSION_KEY);
+    amplitude.track('Signed Out');
+    amplitude.setUserId(undefined);
   }
 
   register(input: {
@@ -98,6 +78,7 @@ export class AuthService {
     users.push(user);
     saveUsers(users);
     this.startSession(user);
+    amplitude.track('Signed Up', { provider: user.provider });
     return { ok: true };
   }
 
@@ -169,6 +150,8 @@ export class AuthService {
     this._session.set(session);
     localStorage.setItem(SESSION_KEY, JSON.stringify(session));
     this._modalOpen.set(false);
+    amplitude.setUserId(user.email);
+    amplitude.track('Signed In', { provider: user.provider });
   }
 }
 
@@ -192,12 +175,6 @@ function loadSession(): AuthSession | null {
   } catch {
     return null;
   }
-}
-
-function loadSimulationCount(): number {
-  const raw = localStorage.getItem(SIM_COUNT_KEY);
-  const parsed = raw ? Number(raw) : 0;
-  return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 0;
 }
 
 function normalizePhone(phone: string): string {
