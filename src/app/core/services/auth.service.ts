@@ -213,6 +213,14 @@ export class AuthService {
     }
   }
 
+  async getToken(template?: string): Promise<string | null> {
+    const clerk = this.clerk ?? (await this.clerkService.load());
+    this.clerk = clerk;
+    const session = clerk.session;
+    if (!session) return null;
+    return session.getToken(template ? { template } : undefined);
+  }
+
   async handleRedirectCallback(): Promise<void> {
     const clerk = this.clerk ?? (await this.clerkService.load());
     this.clerk = clerk;
