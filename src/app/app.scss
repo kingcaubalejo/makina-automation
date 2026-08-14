@@ -1,17 +1,23 @@
 :host { display: block; height: 100%; }
 
-.shell {
-  display: flex;
-  flex-direction: column;
+.stage {
+  position: relative;
+  width: 100vw;
   height: 100vh;
+  overflow: hidden;
   background: var(--bg);
   color: var(--text);
 }
 
-.main {
-  flex: 1;
-  display: flex;
-  min-height: 0;
+.canvas-layer {
+  position: absolute;
+  inset: 0;
+  display: block;
 }
 
-app-canvas { flex: 1; min-width: 0; position: relative; }
+.ui-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 10;
+}

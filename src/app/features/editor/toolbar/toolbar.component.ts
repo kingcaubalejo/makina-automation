@@ -1,5 +1,6 @@
-import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { EditorStore, Tool } from '../../../core/services/editor-store';
+import { AuthService } from '../../../core/services/auth.service';
 
 interface ToolDef {
   id: Tool;
@@ -12,15 +13,18 @@ interface ToolDef {
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <div class="toolbar">
-      <div class="brand">
-        <svg class="brand-mark" viewBox="0 0 36 16" width="42" height="18" aria-hidden="true">
-          <circle cx="6"  cy="8" r="4.5" fill="none" stroke="currentColor" stroke-width="1.4" />
-          <circle cx="30" cy="8" r="4.5" fill="none" stroke="currentColor" stroke-width="1.4" />
-          <circle cx="30" cy="8" r="2.4" fill="none" stroke="currentColor" stroke-width="1.4" />
-          <line   x1="10.8" y1="8" x2="23" y2="8" stroke="currentColor" stroke-width="1.4" />
-          <polyline points="20.5,5.5 23.5,8 20.5,10.5" fill="none" stroke="currentColor" stroke-width="1.4" />
-        </svg>
+    <!-- top-left: brand + workspace -->
+    <div class="cluster top-left">
+      <div class="card brand-card">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 36 16" width="34" height="15">
+            <circle cx="6"  cy="8" r="4.5" fill="none" stroke="currentColor" stroke-width="1.4" />
+            <circle cx="30" cy="8" r="4.5" fill="none" stroke="currentColor" stroke-width="1.4" />
+            <circle cx="30" cy="8" r="2.4" fill="none" stroke="currentColor" stroke-width="1.4" />
+            <line   x1="10.8" y1="8" x2="23" y2="8" stroke="currentColor" stroke-width="1.4" />
+            <polyline points="20.5,5.5 23.5,8 20.5,10.5" fill="none" stroke="currentColor" stroke-width="1.4" />
+          </svg>
+        </span>
         <div class="brand-text">
           <strong>Makina</strong>
           <input
@@ -35,14 +39,17 @@ interface ToolDef {
           />
         </div>
       </div>
+    </div>
 
-      <div class="tools">
-        @for (t of tools; track t.id) {
+    <!-- top-center: tools -->
+    <div class="cluster top-center">
+      <div class="card tool-pill">
+        @for (t of tools; track t.id; let i = $index) {
           <button
             class="tool-btn"
             [class.active]="store.tool() === t.id"
             (click)="store.setTool(t.id)"
-            [title]="t.label + ' (' + t.hint + ')'"
+            [title]="t.label + ' — ' + t.hint"
           >
             <svg class="icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
               @switch (t.id) {
@@ -65,22 +72,18 @@ interface ToolDef {
                 }
               }
             </svg>
-            <span class="label">{{ t.label }}</span>
+            <span class="kbd">{{ t.hint }}</span>
           </button>
         }
       </div>
+      <p class="tool-hint">
+        Press <kbd>{{ toolHint() }}</kbd> or click a tool
+      </p>
+    </div>
 
-      <div class="spacer"></div>
-
-      <div class="actions">
-        <button class="ghost" (click)="store.openNewWindow()" title="Open a new workspace in a new window">
-          <svg class="icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-            <rect x="4" y="6" width="14" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.7" />
-            <path d="M14 10h6V4h-6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
-            <path d="M16 6l4 -4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
-          </svg>
-        </button>
-        <span class="divider"></span>
+    <!-- top-right: actions + account -->
+    <div class="cluster top-right">
+      <div class="card action-row">
         <button class="ghost" (click)="store.undo()" [disabled]="!store.canUndo()" title="Undo (⌘Z)">
           <svg class="icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
             <path d="M9 14l-4-4 4-4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
@@ -93,9 +96,17 @@ interface ToolDef {
             <path d="M19 10h-9a5 5 0 100 10h2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
           </svg>
         </button>
+        <span class="divider"></span>
         <button class="ghost" (click)="store.clear()" title="Clear canvas">
           <svg class="icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
             <path d="M3 6h18M8 6V4h8v2M5 6l1 14h12l1-14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
+        <button class="ghost" (click)="store.openNewWindow()" title="Open a new workspace in a new window">
+          <svg class="icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+            <rect x="4" y="6" width="14" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.7" />
+            <path d="M14 10h6V4h-6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
+            <path d="M16 6l4 -4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
           </svg>
         </button>
         <span class="divider"></span>
@@ -112,30 +123,61 @@ interface ToolDef {
           }
         </button>
       </div>
+
+      @if (auth.isAuthenticated()) {
+        <button class="account-btn card" (click)="auth.logout()" [title]="'Signed in as ' + auth.currentUser()?.email + ' — click to sign out'">
+          <span class="avatar" aria-hidden="true">{{ initials() }}</span>
+          <span class="account-label">Sign out</span>
+        </button>
+      } @else {
+        <button class="account-btn primary card" (click)="auth.openModal()" title="Sign in">
+          <svg class="icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+            <path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
+            <path d="M10 17l5-5-5-5M15 12H3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          <span class="account-label">Sign in</span>
+        </button>
+      }
     </div>
   `,
   styles: [
     `
-      .toolbar {
-        height: 56px;
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        padding: 0 16px;
-        background: var(--surface);
-        border-bottom: 1px solid var(--border);
+      :host {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        display: block;
       }
-      .brand {
+      .cluster {
+        position: absolute;
         display: flex;
         align-items: center;
-        gap: 12px;
-        padding-right: 14px;
-        border-right: 1px solid var(--border);
-        margin-right: 4px;
+        gap: 8px;
+        pointer-events: auto;
+      }
+      .cluster.top-left    { top: 16px; left: 16px; }
+      .cluster.top-center  { top: 16px; left: 50%; transform: translateX(-50%); flex-direction: column; gap: 6px; }
+      .cluster.top-right   { top: 16px; right: 16px; }
+
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        box-shadow: var(--shadow);
+        padding: 6px;
+        display: inline-flex;
+        align-items: center;
+      }
+
+      /* brand card */
+      .brand-card {
+        gap: 10px;
+        padding: 6px 12px 6px 10px;
       }
       .brand-mark {
         color: var(--ink);
-        flex-shrink: 0;
+        display: inline-flex;
+        align-items: center;
       }
       .brand-text {
         display: flex;
@@ -143,21 +185,14 @@ interface ToolDef {
         line-height: 1.05;
       }
       .brand-text strong {
-        font-family: "Newsreader", ui-serif, Georgia, serif;
+        font-family: var(--serif);
         font-style: italic;
-        font-size: 19px;
+        font-size: 17px;
         font-weight: 700;
         letter-spacing: -0.01em;
       }
-      .brand-text span {
-        font-family: "Newsreader", ui-serif, Georgia, serif;
-        font-style: italic;
-        font-size: 11px;
-        color: var(--text-muted);
-        margin-top: 2px;
-      }
       .workspace-name {
-        font-family: "Newsreader", ui-serif, Georgia, serif;
+        font-family: var(--serif);
         font-style: italic;
         font-size: 11px;
         color: var(--text-muted);
@@ -171,93 +206,146 @@ interface ToolDef {
         min-width: 80px;
         text-overflow: ellipsis;
       }
-      .workspace-name:hover {
-        border-color: var(--border);
-      }
+      .workspace-name:hover { border-color: var(--border); }
       .workspace-name:focus {
         border-color: var(--accent);
         border-style: solid;
-        background: var(--surface);
+        background: var(--surface-2);
         color: var(--text);
       }
-      .tools {
-        display: flex;
-        gap: 4px;
-        background: var(--surface-2);
-        padding: 4px;
-        border-radius: 10px;
+
+      /* tool pill */
+      .tool-pill {
+        gap: 2px;
+        padding: 5px;
       }
       .tool-btn {
+        position: relative;
         display: inline-flex;
         align-items: center;
-        gap: 6px;
-        padding: 6px 10px;
-        border-radius: 7px;
+        justify-content: center;
+        width: 36px;
+        height: 36px;
+        border-radius: 8px;
         border: none;
         background: transparent;
-        color: var(--text-muted);
-        font-size: 13px;
-        font-weight: 500;
+        color: var(--text);
         transition: background 120ms, color 120ms;
       }
-      .tool-btn:hover {
-        background: var(--surface);
-        color: var(--text);
-      }
+      .tool-btn:hover { background: var(--surface-2); }
       .tool-btn.active {
-        background: var(--surface);
+        background: var(--accent-soft);
         color: var(--accent);
-        box-shadow: var(--shadow);
       }
-      .icon {
-        width: 16px;
-        height: 16px;
-        display: block;
-        flex-shrink: 0;
+      .tool-btn .kbd {
+        position: absolute;
+        right: 3px;
+        bottom: 2px;
+        font-size: 8px;
+        font-weight: 600;
+        color: var(--text-muted);
+        line-height: 1;
+        letter-spacing: 0;
       }
-      .spacer {
-        flex: 1;
+      .tool-btn.active .kbd { color: var(--accent); }
+
+      .tool-hint {
+        margin: 0;
+        font-size: 11px;
+        color: var(--text-muted);
+        font-family: var(--serif);
+        font-style: italic;
       }
-      .actions {
-        display: flex;
-        gap: 4px;
-        align-items: center;
+      .tool-hint kbd {
+        display: inline-block;
+        min-width: 18px;
+        text-align: center;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 1px 5px;
+        font-family: var(--mono);
+        font-style: normal;
+        font-size: 10px;
+        color: var(--text);
+        margin: 0 2px;
+      }
+
+      /* action row */
+      .action-row {
+        gap: 2px;
       }
       .ghost {
         background: transparent;
-        border: 1px solid transparent;
+        border: none;
         border-radius: 8px;
         width: 34px;
         height: 34px;
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        color: var(--text-muted);
-      }
-      .ghost:hover {
-        background: var(--surface-2);
         color: var(--text);
       }
-      .ghost:disabled {
-        opacity: 0.4;
-        cursor: not-allowed;
-      }
+      .ghost:hover { background: var(--surface-2); }
+      .ghost:disabled { opacity: 0.35; cursor: not-allowed; }
+      .ghost:disabled:hover { background: transparent; }
       .divider {
         width: 1px;
-        height: 22px;
+        height: 20px;
         background: var(--border);
-        margin: 0 6px;
+        margin: 0 4px;
       }
+
+      /* account button */
+      .account-btn {
+        gap: 8px;
+        padding: 6px 12px;
+        height: 38px;
+        border-radius: 999px;
+        cursor: pointer;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--text);
+      }
+      .account-btn:hover { background: var(--surface-2); }
+      .account-btn.primary {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #fff;
+        box-shadow: var(--shadow);
+      }
+      .account-btn.primary:hover { filter: brightness(1.05); background: var(--accent); }
+      .avatar {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 22px;
+        height: 22px;
+        border-radius: 999px;
+        background: var(--accent-soft);
+        color: var(--accent);
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+      }
+      .icon { width: 16px; height: 16px; display: block; flex-shrink: 0; }
+
       @media (max-width: 900px) {
-        .tool-btn .label { display: none; }
-        .tool-btn { padding: 6px 8px; }
-        .divider { margin: 0 2px; }
+        .tool-hint { display: none; }
+        .account-label { display: none; }
+        .account-btn { padding: 6px; width: 38px; height: 38px; justify-content: center; }
+      }
+      @media (max-width: 620px) {
+        .cluster.top-left .brand-text strong { display: none; }
+        .cluster.top-left .workspace-name { max-width: 100px; }
+        .action-row .divider { display: none; }
       }
     `,
   ],
 })
 export class ToolbarComponent {
   protected readonly store = inject(EditorStore);
+  protected readonly auth = inject(AuthService);
 
   protected readonly tools: ToolDef[] = [
     { id: 'select',     label: 'Select',     hint: 'V' },
@@ -266,6 +354,20 @@ export class ToolbarComponent {
     { id: 'pan',        label: 'Pan',        hint: 'H' },
     { id: 'erase',      label: 'Erase',      hint: 'E' },
   ];
+
+  protected readonly toolHint = computed(() => {
+    const active = this.tools.find((t) => t.id === this.store.tool());
+    return active?.hint ?? 'V';
+  });
+
+  protected readonly initials = computed(() => {
+    const user = this.auth.currentUser();
+    if (!user) return '?';
+    const f = (user.firstName ?? '').trim()[0] ?? '';
+    const l = (user.lastName ?? '').trim()[0] ?? '';
+    const fallback = (user.email ?? '?').trim()[0] ?? '?';
+    return (f + l) || fallback;
+  });
 
   protected onWorkspaceInput(ev: Event): void {
     const value = (ev.target as HTMLInputElement).value;
@@ -279,4 +381,3 @@ export class ToolbarComponent {
     if (!trimmed) el.value = 'Untitled';
   }
 }
-

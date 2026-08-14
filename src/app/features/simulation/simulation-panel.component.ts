@@ -9,6 +9,7 @@ import {
   untracked,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import * as amplitude from '@amplitude/unified';
 import { EditorStore } from '../../core/services/editor-store';
 import { SimulationResult, simulate } from '../../core/algorithms/simulate';
 
@@ -51,7 +52,7 @@ import { SimulationResult, simulate } from '../../core/algorithms/simulate';
         <h3>Controls</h3>
         <div class="controls">
           <button class="btn" (click)="reset()" [disabled]="!hasStart()">Reset</button>
-          <button class="btn" (click)="step()" [disabled]="!canStep()">
+          <button class="btn" (click)="onStepClick()" [disabled]="!canStep()">
             Step
           </button>
           <button class="btn primary" (click)="toggleRun()" [disabled]="!canRun()">
@@ -60,7 +61,7 @@ import { SimulationResult, simulate } from '../../core/algorithms/simulate';
         </div>
       </section>
 
-      @if (result(); as r) {
+      @if (started() && result(); as r) {
         <section>
           <h3>Trace</h3>
           <div class="trace">
@@ -71,7 +72,7 @@ import { SimulationResult, simulate } from '../../core/algorithms/simulate';
                 <span class="active-set">{{ activeLabels(s.active) }}</span>
               </div>
             }
-            @if (r.rejectedAt !== undefined) {
+            @if (r.rejectedAt !== undefined && cursor() >= r.rejectedAt) {
               <div class="step rejected">
                 <span class="idx">·</span>
                 <span class="consumed">stuck</span>
@@ -83,13 +84,13 @@ import { SimulationResult, simulate } from '../../core/algorithms/simulate';
 
         <section>
           <h3>Result</h3>
-          <div class="verdict" [class.accept]="r.accepted" [class.reject]="!r.accepted && atEnd()">
+          <div class="verdict" [class.accept]="r.accepted && atEnd()" [class.reject]="!r.accepted && atEnd()">
             <span class="dot"></span>
             <strong>{{ verdictLabel() }}</strong>
             <span class="muted">@ position {{ cursor() }} / {{ chars().length }}</span>
           </div>
         </section>
-      } @else {
+      } @else if (!result()) {
         <section class="empty">
           <p>
             Define a start state and accept state, then enter input above to simulate
@@ -227,6 +228,7 @@ export class SimulationPanelComponent implements OnDestroy {
 
   protected readonly cursor = signal(0);
   protected readonly running = signal(false);
+  protected readonly started = signal(false);
 
   protected readonly chars = computed(() => [...this.store.simulationInput()]);
   protected readonly hasStart = computed(() => this.store.validation().hasStart);
@@ -254,7 +256,8 @@ export class SimulationPanelComponent implements OnDestroy {
     const r = this.result();
     if (!r) return '';
     if (this.atEnd()) return r.accepted ? 'Accepted' : 'Rejected';
-    return 'Running…';
+    if (this.running()) return 'Running…';
+    return 'Paused';
   });
 
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -263,7 +266,8 @@ export class SimulationPanelComponent implements OnDestroy {
     effect(() => {
       const r = this.result();
       const idx = this.cursor();
-      if (!r) {
+      const started = this.started();
+      if (!r || !started) {
         this.store.clearActiveStates();
         return;
       }
@@ -283,6 +287,7 @@ export class SimulationPanelComponent implements OnDestroy {
           this.running.set(false);
           this.clearTimer();
         }
+        this.started.set(false);
       });
     });
   }
@@ -291,23 +296,46 @@ export class SimulationPanelComponent implements OnDestroy {
     this.store.simulationInput.set(value);
     this.cursor.set(0);
     this.running.set(false);
+    this.started.set(false);
     this.clearTimer();
   }
 
   protected reset(): void {
+    amplitude.track('Reset Simulation', {
+      input: this.store.simulationInput(),
+      cursor_position: this.cursor(),
+      was_running: this.running(),
+    });
     this.cursor.set(0);
     this.running.set(false);
+    this.started.set(false);
     this.clearTimer();
+  }
+
+  protected onStepClick(): void {
+    amplitude.track('Stepped Simulation', {
+      input: this.store.simulationInput(),
+      from_position: this.cursor(),
+    });
+    this.step();
   }
 
   protected step(): void {
     const r = this.result();
     if (!r) return;
+    this.started.set(true);
     const next = Math.min(this.cursor() + 1, r.steps.length - 1);
     this.cursor.set(next);
     if (next >= r.steps.length - 1) {
       this.running.set(false);
       this.clearTimer();
+      amplitude.track('Simulation Finished', {
+        input: this.store.simulationInput(),
+        input_length: this.store.simulationInput().length,
+        states_count: this.store.states().length,
+        accepted: r.accepted,
+        total_steps: r.steps.length,
+      });
     }
   }
 
@@ -315,11 +343,23 @@ export class SimulationPanelComponent implements OnDestroy {
     if (this.running()) {
       this.running.set(false);
       this.clearTimer();
+      amplitude.track('Paused Simulation', {
+        input: this.store.simulationInput(),
+        cursor_position: this.cursor(),
+      });
       return;
     }
     if (!this.canRun()) return;
     if (this.atEnd()) this.cursor.set(0);
+    this.started.set(true);
     this.running.set(true);
+    const r = this.result();
+    amplitude.track('Ran Simulation', {
+      input: this.store.simulationInput(),
+      input_length: this.store.simulationInput().length,
+      states_count: this.store.states().length,
+      accepted: r?.accepted ?? null,
+    });
     this.timer = setInterval(() => {
       if (!this.canStep()) {
         this.running.set(false);

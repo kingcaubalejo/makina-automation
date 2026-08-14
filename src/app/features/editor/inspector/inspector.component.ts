@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { EditorStore } from '../../../core/services/editor-store';
+import { AuthService } from '../../../core/services/auth.service';
 import { PropertiesPanelComponent } from './properties-panel.component';
 import { ConversionPanelComponent } from '../../conversion/conversion-panel.component';
 import { SimulationPanelComponent } from '../../simulation/simulation-panel.component';
@@ -9,6 +10,12 @@ import { TestsPanelComponent } from '../../tests/tests-panel.component';
 import { LibraryPanelComponent } from './library-panel.component';
 
 type Tab = 'properties' | 'simulate' | 'convert' | 'regex' | 'tests' | 'library';
+
+interface TabDef {
+  id: Tab;
+  label: string;
+  requiresAuth?: boolean;
+}
 
 @Component({
   selector: 'app-inspector',
@@ -25,16 +32,17 @@ type Tab = 'properties' | 'simulate' | 'convert' | 'regex' | 'tests' | 'library'
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <aside class="inspector">
-      <nav class="tabs">
+      <nav class="tabs" role="tablist">
         @for (t of tabs; track t.id) {
           <button
             class="tab"
             [class.active]="active() === t.id"
-            [class.locked]="t.locked"
-            [attr.aria-disabled]="t.locked ? 'true' : null"
-            [attr.tabindex]="t.locked ? -1 : null"
+            [class.locked]="isLocked(t)"
+            [attr.aria-selected]="active() === t.id"
+            [attr.aria-disabled]="isLocked(t) ? 'true' : null"
             (click)="selectTab(t)"
-            [title]="t.locked ? t.label + ' — coming soon' : t.label"
+            [title]="tooltip(t)"
+            role="tab"
           >
             <svg class="tab-icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
               @switch (t.id) {
@@ -64,13 +72,19 @@ type Tab = 'properties' | 'simulate' | 'convert' | 'regex' | 'tests' | 'library'
                 }
               }
             </svg>
-            <span class="label">{{ t.label }}</span>
-            @if (t.locked) {
-              <span class="soon" aria-label="coming soon">soon</span>
+            @if (isLocked(t)) {
+              <span class="lock-badge" aria-label="Sign in to unlock" title="Sign in to unlock">
+                <svg viewBox="0 0 24 24" width="9" height="9" aria-hidden="true">
+                  <rect x="6" y="11" width="12" height="9" rx="2" fill="currentColor" />
+                  <path d="M8 11V8a4 4 0 018 0v3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                </svg>
+              </span>
             }
           </button>
         }
       </nav>
+
+      <div class="tab-label">{{ activeLabel() }}</div>
 
       <div class="content">
         @switch (active()) {
@@ -86,121 +100,162 @@ type Tab = 'properties' | 'simulate' | 'convert' | 'regex' | 'tests' | 'library'
       <div class="status">
         @if (validation().errors.length) {
           @for (e of validation().errors; track e) {
-            <div class="status-row error">{{ e }}</div>
+            <div class="status-row error">
+              <span class="status-dot" aria-hidden="true"></span>{{ e }}
+            </div>
           }
         } @else if (!validation().isDfa) {
-          <div class="status-row info">NFA — alphabet: {{ alphabetLabel() }}</div>
+          <div class="status-row info">
+            <span class="status-dot" aria-hidden="true"></span>NFA · alphabet {{ alphabetLabel() }}
+          </div>
         } @else {
-          <div class="status-row ok">DFA — alphabet: {{ alphabetLabel() }}</div>
+          <div class="status-row ok">
+            <span class="status-dot" aria-hidden="true"></span>DFA · alphabet {{ alphabetLabel() }}
+          </div>
         }
       </div>
     </aside>
   `,
   styles: [
     `
+      :host {
+        position: absolute;
+        top: 76px;
+        left: 16px;
+        bottom: 16px;
+        width: 300px;
+        pointer-events: auto;
+        display: block;
+      }
       .inspector {
-        width: 360px;
-        flex-shrink: 0;
         background: var(--surface);
-        border-left: 1px solid var(--border);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        box-shadow: var(--shadow);
         display: flex;
         flex-direction: column;
         height: 100%;
+        max-height: 100%;
+        overflow: hidden;
       }
       .tabs {
         display: grid;
         grid-template-columns: repeat(6, 1fr);
         gap: 2px;
-        padding: 8px;
-        background: var(--surface);
+        padding: 6px;
+        background: var(--surface-2);
+        border-radius: 12px 12px 0 0;
         border-bottom: 1px solid var(--border);
-      }
-      .tab .label {
-        font-size: 10px;
       }
       .tab {
         position: relative;
-        display: flex;
-        flex-direction: column;
+        display: inline-flex;
         align-items: center;
-        gap: 4px;
-        padding: 8px 4px;
-        background: transparent;
+        justify-content: center;
+        height: 32px;
         border: none;
         border-radius: 8px;
-        font-size: 11px;
-        font-weight: 500;
+        background: transparent;
         color: var(--text-muted);
         transition: background 120ms, color 120ms;
       }
-      .tab-icon {
-        width: 16px;
-        height: 16px;
-        display: block;
-        flex-shrink: 0;
-      }
-      .tab:hover { background: var(--surface-2); color: var(--text); }
+      .tab-icon { width: 16px; height: 16px; display: block; flex-shrink: 0; }
+      .tab:hover { background: var(--surface); color: var(--text); }
       .tab.active {
-        background: var(--accent-soft);
+        background: var(--surface);
         color: var(--accent);
+        box-shadow: var(--shadow);
       }
-      .tab.locked {
-        opacity: 0.45;
-        cursor: not-allowed;
-      }
-      .tab.locked:hover {
-        background: transparent;
-        color: var(--text-muted);
-      }
-      .soon {
+      .tab.locked { opacity: 0.55; cursor: pointer; }
+      .tab.locked:hover { background: var(--surface); color: var(--text); opacity: 0.75; }
+      .lock-badge {
         position: absolute;
         top: 2px;
         right: 2px;
-        font-size: 8px;
-        font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: 0.06em;
-        background: var(--surface-2);
-        color: var(--text-muted);
-        border: 1px solid var(--border);
+        width: 13px;
+        height: 13px;
         border-radius: 999px;
-        padding: 1px 5px;
-        line-height: 1;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        color: var(--text-muted);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .tab.locked:hover .lock-badge { color: var(--accent); border-color: var(--accent); }
+      .tab-label {
+        font-family: var(--serif);
+        font-style: italic;
+        font-size: 12px;
+        color: var(--text-muted);
+        padding: 8px 16px 0;
+        letter-spacing: 0.005em;
       }
       .content {
         flex: 1;
         overflow-y: auto;
+        min-height: 0;
       }
       .status {
         border-top: 1px solid var(--border);
         padding: 8px 14px;
         background: var(--surface-2);
+        border-radius: 0 0 12px 12px;
       }
       .status-row {
-        font-size: 12px;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 11px;
         color: var(--text-muted);
+      }
+      .status-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 999px;
+        background: currentColor;
+        flex-shrink: 0;
       }
       .status-row.error { color: var(--danger); }
       .status-row.ok    { color: var(--success); }
       .status-row.info  { color: var(--accent); }
+
+      @media (max-height: 640px) {
+        :host { bottom: auto; max-height: calc(100vh - 92px); }
+      }
+      @media (max-width: 720px) {
+        :host { width: calc(100vw - 32px); max-width: 320px; }
+      }
     `,
   ],
 })
 export class InspectorComponent {
   protected readonly store = inject(EditorStore);
+  protected readonly auth = inject(AuthService);
   protected readonly active = signal<Tab>('properties');
 
-  protected readonly tabs: Array<{ id: Tab; label: string; locked?: boolean }> = [
-    { id: 'properties', label: 'Inspect'                 },
-    { id: 'simulate',   label: 'Simulate'                },
-    { id: 'convert',    label: 'Convert',  locked: true  },
-    { id: 'regex',      label: 'Regex',    locked: true  },
-    { id: 'tests',      label: 'Tests',    locked: true  },
-    { id: 'library',    label: 'Library',  locked: true  },
+  protected readonly tabs: TabDef[] = [
+    { id: 'properties', label: 'Inspect'                      },
+    { id: 'simulate',   label: 'Simulate'                     },
+    { id: 'convert',    label: 'Convert', requiresAuth: true  },
+    { id: 'regex',      label: 'Regex',   requiresAuth: true  },
+    { id: 'tests',      label: 'Tests',   requiresAuth: true  },
+    { id: 'library',    label: 'Library', requiresAuth: true  },
   ];
 
-  protected selectTab(t: { id: Tab; locked?: boolean }): void {
-    if (t.locked) return;
+  protected isLocked(t: TabDef): boolean {
+    return !!t.requiresAuth && !this.auth.isAuthenticated();
+  }
+
+  protected tooltip(t: TabDef): string {
+    return this.isLocked(t) ? `${t.label} — sign in to unlock` : t.label;
+  }
+
+  protected selectTab(t: TabDef): void {
+    if (this.isLocked(t)) {
+      this.auth.openModal();
+      return;
+    }
     this.active.set(t.id);
   }
 
@@ -208,6 +263,10 @@ export class InspectorComponent {
   protected readonly alphabetLabel = computed(() => {
     const a = this.store.alphabet();
     return a.length ? a.join(', ') : '∅';
+  });
+  protected readonly activeLabel = computed(() => {
+    const id = this.active();
+    return this.tabs.find((t) => t.id === id)?.label ?? '';
   });
 }
 
