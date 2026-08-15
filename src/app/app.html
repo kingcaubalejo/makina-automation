@@ -1,9 +1,16 @@
 <div class="stage">
-  <app-canvas class="canvas-layer"></app-canvas>
-  <div class="ui-layer">
-    <app-toolbar></app-toolbar>
-    <app-inspector></app-inspector>
-  </div>
+  @if (workspaces.ready()) {
+    <app-canvas class="canvas-layer"></app-canvas>
+    <div class="ui-layer">
+      <app-toolbar></app-toolbar>
+      <app-inspector></app-inspector>
+    </div>
+  } @else {
+    <div class="boot-panel">
+      <div class="app-loader-ring" aria-hidden="true"></div>
+      <p>Loading Makina…</p>
+    </div>
+  }
 </div>
 <app-modal-host></app-modal-host>
 <app-auth-modal></app-auth-modal>

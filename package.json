@@ -22,7 +22,10 @@
     "@angular/router": "^21.2.0",
     "@clerk/clerk-js": "^6.29.0",
     "rxjs": "~7.8.0",
-    "tslib": "^2.3.0"
+    "tslib": "^2.3.0",
+    "y-indexeddb": "^9.0.12",
+    "y-websocket": "^2.0.4",
+    "yjs": "^13.6.20"
   },
   "devDependencies": {
     "@angular/build": "^21.2.10",

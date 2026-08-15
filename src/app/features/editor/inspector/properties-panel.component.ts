@@ -3,6 +3,7 @@ import { DecimalPipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { EditorStore } from '../../../core/services/editor-store';
 import { EPSILON } from '../../../core/models/automaton';
+import { WorkspaceService } from '../../../core/services/workspace.service';
 
 @Component({
   selector: 'app-properties-panel',
@@ -22,6 +23,8 @@ import { EPSILON } from '../../../core/models/automaton';
                   type="text"
                   [ngModel]="s.label"
                   (ngModelChange)="store.setStateLabel(s.id, $event)"
+                  (focus)="workspaces.publishEditing({ kind: 'state', id: s.id })"
+                  (blur)="workspaces.publishEditing(null)"
                 />
               </div>
               <div class="row toggles">
@@ -62,6 +65,8 @@ import { EPSILON } from '../../../core/models/automaton';
                   type="text"
                   [ngModel]="t.symbols.join(', ')"
                   (ngModelChange)="updateSymbols(t.id, $event)"
+                  (focus)="workspaces.publishEditing({ kind: 'transition', id: t.id })"
+                  (blur)="workspaces.publishEditing(null)"
                   placeholder="e.g. a, b, ε"
                 />
               </div>
@@ -200,6 +205,7 @@ import { EPSILON } from '../../../core/models/automaton';
 })
 export class PropertiesPanelComponent {
   protected readonly store = inject(EditorStore);
+  protected readonly workspaces = inject(WorkspaceService);
   protected readonly selectedStates = computed(() => this.store.selectedStates());
   protected readonly selectedTransitions = computed(() => this.store.selectedTransitions());
 

@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { EditorStore, Tool } from '../../../core/services/editor-store';
 import { AuthService } from '../../../core/services/auth.service';
+import { WorkspaceService } from '../../../core/services/workspace.service';
 
 interface ToolDef {
   id: Tool;
@@ -102,7 +103,7 @@ interface ToolDef {
             <path d="M3 6h18M8 6V4h8v2M5 6l1 14h12l1-14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
           </svg>
         </button>
-        <button class="ghost" (click)="store.openNewWindow()" title="Open a new workspace in a new window">
+        <button class="ghost" (click)="workspaces.openBlankWindow()" title="Open a new workspace in a new window">
           <svg class="icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
             <rect x="4" y="6" width="14" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.7" />
             <path d="M14 10h6V4h-6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
@@ -123,6 +124,24 @@ interface ToolDef {
           }
         </button>
       </div>
+
+      @if (workspaces.ready() && workspaces.connectionStatus() !== 'local') {
+        <div class="collaborators card" [attr.title]="peerTooltip()">
+          <span class="conn-dot" [class]="'conn-' + workspaces.connectionStatus()"></span>
+          <div class="collaborators-stack">
+            @for (peer of visiblePeers(); track peer.clientId) {
+              <span
+                class="avatar peer-avatar"
+                [style.background]="peer.color"
+                [attr.title]="peer.name"
+              >{{ peer.initials }}</span>
+            }
+            @if (extraPeerCount() > 0) {
+              <span class="avatar peer-avatar peer-extra">+{{ extraPeerCount() }}</span>
+            }
+          </div>
+        </div>
+      }
 
       @if (auth.isAuthenticated()) {
         <button class="account-btn card" (click)="auth.logout()" [title]="'Signed in as ' + auth.currentUser()?.email + ' — click to sign out'">
@@ -330,6 +349,38 @@ interface ToolDef {
       }
       .icon { width: 16px; height: 16px; display: block; flex-shrink: 0; }
 
+      /* collaborators */
+      .collaborators {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 10px;
+        height: 38px;
+        border-radius: 999px;
+      }
+      .conn-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: var(--text-muted);
+        transition: background 200ms;
+      }
+      .conn-dot.conn-connected { background: #22c55e; }
+      .conn-dot.conn-connecting { background: #f59e0b; }
+      .conn-dot.conn-disconnected { background: #ef4444; }
+      .collaborators-stack {
+        display: flex;
+        align-items: center;
+      }
+      .peer-avatar {
+        margin-left: -6px;
+        border: 2px solid var(--surface);
+        color: white;
+        font-size: 10px;
+      }
+      .peer-avatar:first-child { margin-left: 0; }
+      .peer-extra { background: var(--surface-2); color: var(--text); }
+
       @media (max-width: 900px) {
         .tool-hint { display: none; }
         .account-label { display: none; }
@@ -346,6 +397,7 @@ interface ToolDef {
 export class ToolbarComponent {
   protected readonly store = inject(EditorStore);
   protected readonly auth = inject(AuthService);
+  protected readonly workspaces = inject(WorkspaceService);
 
   protected readonly tools: ToolDef[] = [
     { id: 'select',     label: 'Select',     hint: 'V' },
@@ -369,9 +421,33 @@ export class ToolbarComponent {
     return (f + l) || fallback;
   });
 
+  private readonly MAX_VISIBLE_PEERS = 3;
+
+  protected readonly visiblePeers = computed(() =>
+    this.workspaces.remotePeers().slice(0, this.MAX_VISIBLE_PEERS),
+  );
+
+  protected readonly extraPeerCount = computed(() =>
+    Math.max(0, this.workspaces.remotePeers().length - this.MAX_VISIBLE_PEERS),
+  );
+
+  protected readonly peerTooltip = computed(() => {
+    const peers = this.workspaces.remotePeers();
+    const status = this.workspaces.connectionStatus();
+    const header = status === 'connected'
+      ? peers.length === 0
+        ? 'Connected — no one else here'
+        : `Connected — ${peers.length} other${peers.length === 1 ? '' : 's'} editing`
+      : status === 'connecting'
+        ? 'Connecting…'
+        : 'Disconnected';
+    if (peers.length === 0) return header;
+    return header + '\n' + peers.map((p) => `• ${p.name}`).join('\n');
+  });
+
   protected onWorkspaceInput(ev: Event): void {
     const value = (ev.target as HTMLInputElement).value;
-    this.store.workspaceName.set(value || 'Untitled');
+    this.store.setWorkspaceName(value || 'Untitled');
   }
 
   protected onWorkspaceBlur(ev: Event): void {

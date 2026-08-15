@@ -11,6 +11,8 @@ import { LibraryPanelComponent } from './library-panel.component';
 
 type Tab = 'properties' | 'simulate' | 'convert' | 'regex' | 'tests' | 'library';
 
+const COLLAPSED_STORAGE_KEY = 'makina:inspector:collapsed';
+
 interface TabDef {
   id: Tab;
   label: string;
@@ -30,7 +32,30 @@ interface TabDef {
     LibraryPanelComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
+  host: {
+    '[class.collapsed]': 'collapsed()',
+  },
   template: `
+    @if (collapsed()) {
+      <button
+        type="button"
+        class="expand-pill"
+        (click)="toggleCollapsed()"
+        title="Expand inspector"
+        aria-label="Expand inspector"
+      >
+        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+          <path
+            d="M9 6l6 6-6 6"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </svg>
+      </button>
+    } @else {
     <aside class="inspector">
       <nav class="tabs" role="tablist">
         @for (t of tabs; track t.id) {
@@ -84,7 +109,27 @@ interface TabDef {
         }
       </nav>
 
-      <div class="tab-label">{{ activeLabel() }}</div>
+      <div class="section-header">
+        <span class="tab-label">{{ activeLabel() }}</span>
+        <button
+          type="button"
+          class="collapse-btn"
+          (click)="toggleCollapsed()"
+          title="Collapse inspector"
+          aria-label="Collapse inspector"
+        >
+          <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+            <path
+              d="M15 6l-6 6 6 6"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </button>
+      </div>
 
       <div class="content">
         @switch (active()) {
@@ -115,6 +160,7 @@ interface TabDef {
         }
       </div>
     </aside>
+    }
   `,
   styles: [
     `
@@ -126,6 +172,28 @@ interface TabDef {
         width: 300px;
         pointer-events: auto;
         display: block;
+      }
+      :host.collapsed {
+        bottom: auto;
+        width: auto;
+      }
+      .expand-pill {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        border-radius: 999px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        color: var(--text-muted);
+        box-shadow: var(--shadow);
+        cursor: pointer;
+        transition: color 120ms, background 120ms;
+      }
+      .expand-pill:hover {
+        color: var(--accent);
+        background: color-mix(in srgb, var(--accent) 8%, var(--surface));
       }
       .inspector {
         background: var(--surface);
@@ -183,13 +251,36 @@ interface TabDef {
         justify-content: center;
       }
       .tab.locked:hover .lock-badge { color: var(--accent); border-color: var(--accent); }
+      .section-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 8px 8px 0 16px;
+        gap: 8px;
+      }
       .tab-label {
         font-family: var(--serif);
         font-style: italic;
         font-size: 12px;
         color: var(--text-muted);
-        padding: 8px 16px 0;
         letter-spacing: 0.005em;
+      }
+      .collapse-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 22px;
+        height: 22px;
+        border-radius: 999px;
+        background: transparent;
+        border: none;
+        color: var(--text-muted);
+        cursor: pointer;
+        transition: background 120ms, color 120ms;
+      }
+      .collapse-btn:hover {
+        background: var(--surface-2);
+        color: var(--text);
       }
       .content {
         flex: 1;
@@ -233,6 +324,25 @@ export class InspectorComponent {
   protected readonly store = inject(EditorStore);
   protected readonly auth = inject(AuthService);
   protected readonly active = signal<Tab>('properties');
+  protected readonly collapsed = signal<boolean>(this.readCollapsed());
+
+  private readCollapsed(): boolean {
+    try {
+      return localStorage.getItem(COLLAPSED_STORAGE_KEY) === '1';
+    } catch {
+      return false;
+    }
+  }
+
+  protected toggleCollapsed(): void {
+    const next = !this.collapsed();
+    this.collapsed.set(next);
+    try {
+      localStorage.setItem(COLLAPSED_STORAGE_KEY, next ? '1' : '0');
+    } catch {
+      // storage unavailable — keep the in-memory toggle
+    }
+  }
 
   protected readonly tabs: TabDef[] = [
     { id: 'properties', label: 'Inspect'                      },

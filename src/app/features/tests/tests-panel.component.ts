@@ -23,7 +23,6 @@ interface TestResult extends TestCase {
   pass: boolean;
 }
 
-const LEGACY_TESTS_KEY = 'automata-studio:tests';
 const PERSIST_DEBOUNCE_MS = 250;
 
 @Component({
@@ -209,17 +208,19 @@ const PERSIST_DEBOUNCE_MS = 250;
 
       .add-row {
         display: grid;
-        grid-template-columns: 1fr 80px auto;
+        grid-template-columns: minmax(0, 1fr) 80px auto;
         gap: 6px;
         margin-top: 6px;
       }
       .add-row .input {
         background: var(--surface-2);
         border-color: var(--border);
+        min-width: 0;
       }
       .add-row .expected {
         background: var(--surface-2);
         border-color: var(--border);
+        min-width: 0;
       }
       .add {
         height: 28px;
@@ -376,13 +377,6 @@ export class TestsPanelComponent {
 
   private loadCases(): TestCase[] {
     try {
-      if (this.store.workspaceId() === 'default') {
-        const legacy = localStorage.getItem(LEGACY_TESTS_KEY);
-        if (legacy && !localStorage.getItem(this.storageKey)) {
-          localStorage.setItem(this.storageKey, legacy);
-          localStorage.removeItem(LEGACY_TESTS_KEY);
-        }
-      }
       const raw = localStorage.getItem(this.storageKey);
       if (!raw) return [];
       const parsed = JSON.parse(raw);
