@@ -11,6 +11,7 @@ import {
 import { FormsModule } from '@angular/forms';
 import * as amplitude from '@amplitude/unified';
 import { EditorStore } from '../../core/services/editor-store';
+import { AuthService } from '../../core/services/auth.service';
 import { SimulationResult, simulate } from '../../core/algorithms/simulate';
 
 @Component({
@@ -225,6 +226,7 @@ import { SimulationResult, simulate } from '../../core/algorithms/simulate';
 })
 export class SimulationPanelComponent implements OnDestroy {
   protected readonly store = inject(EditorStore);
+  private readonly auth = inject(AuthService);
 
   protected readonly cursor = signal(0);
   protected readonly running = signal(false);
@@ -312,7 +314,9 @@ export class SimulationPanelComponent implements OnDestroy {
     this.clearTimer();
   }
 
-  protected onStepClick(): void {
+  protected async onStepClick(): Promise<void> {
+    const ok = await this.auth.verifySession();
+    if (!ok) return;
     amplitude.track('Stepped Simulation', {
       input: this.store.simulationInput(),
       from_position: this.cursor(),
@@ -339,7 +343,7 @@ export class SimulationPanelComponent implements OnDestroy {
     }
   }
 
-  protected toggleRun(): void {
+  protected async toggleRun(): Promise<void> {
     if (this.running()) {
       this.running.set(false);
       this.clearTimer();
@@ -350,6 +354,8 @@ export class SimulationPanelComponent implements OnDestroy {
       return;
     }
     if (!this.canRun()) return;
+    const ok = await this.auth.verifySession();
+    if (!ok) return;
     if (this.atEnd()) this.cursor.set(0);
     this.started.set(true);
     this.running.set(true);

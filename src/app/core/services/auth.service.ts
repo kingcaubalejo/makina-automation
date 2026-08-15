@@ -20,12 +20,17 @@ export class AuthService {
   private readonly _modalOpen = signal(false);
   private readonly _ready = signal(false);
   private readonly _loadError = signal<string | null>(null);
+  private readonly _revokedNotice = signal<string | null>(null);
   private clerk: Clerk | null = null;
+  private explicitSignOut = false;
+  private lastVerifiedAt = 0;
+  private readonly VERIFY_TTL_MS = 60_000;
 
   readonly user = this._user.asReadonly();
   readonly modalOpen = this._modalOpen.asReadonly();
   readonly ready = this._ready.asReadonly();
   readonly loadError = this._loadError.asReadonly();
+  readonly revokedNotice = this._revokedNotice.asReadonly();
   readonly isAuthenticated = computed(() => this._user() !== null);
   readonly currentUser = computed(() => this._user());
 
@@ -51,19 +56,70 @@ export class AuthService {
     return false;
   }
 
+  async requireAuthLive(): Promise<boolean> {
+    if (!this.isAuthenticated()) {
+      this._modalOpen.set(true);
+      return false;
+    }
+    return this.verifySession();
+  }
+
+  async verifySession(options?: { force?: boolean }): Promise<boolean> {
+    const clerk = this.clerk;
+    const session = clerk?.session;
+    if (!clerk || !session) return !this.isAuthenticated();
+    if (!options?.force && Date.now() - this.lastVerifiedAt < this.VERIFY_TTL_MS) {
+      return true;
+    }
+    try {
+      const token = await session.getToken({ skipCache: true });
+      if (!token) {
+        await this.handleRevocation();
+        return false;
+      }
+      this.lastVerifiedAt = Date.now();
+      return true;
+    } catch {
+      await this.handleRevocation();
+      return false;
+    }
+  }
+
   openModal(): void {
     this._modalOpen.set(true);
   }
 
   closeModal(): void {
     this._modalOpen.set(false);
+    this._revokedNotice.set(null);
   }
 
   async logout(): Promise<void> {
     if (!this.clerk) return;
-    await this.clerk.signOut();
-    amplitude.track('Signed Out');
-    amplitude.setUserId(undefined);
+    this.explicitSignOut = true;
+    this.lastVerifiedAt = 0;
+    try {
+      await this.clerk.signOut();
+      amplitude.track('Signed Out');
+      amplitude.setUserId(undefined);
+    } finally {
+      queueMicrotask(() => { this.explicitSignOut = false; });
+    }
+  }
+
+  private async handleRevocation(): Promise<void> {
+    this._revokedNotice.set('Your session was ended. Please sign in again.');
+    this.explicitSignOut = true;
+    this.lastVerifiedAt = 0;
+    try {
+      await this.clerk?.signOut();
+      amplitude.setUserId(undefined);
+    } catch {
+      // ignore — server may already have revoked
+    } finally {
+      queueMicrotask(() => { this.explicitSignOut = false; });
+    }
+    this._modalOpen.set(true);
   }
 
   async loginWithPassword(email: string, password: string): Promise<AuthResult> {
@@ -240,8 +296,14 @@ export class AuthService {
 
   private syncUser(): void {
     const u = this.clerk?.user;
+    const wasAuthenticated = this._user() !== null;
     if (!u) {
       this._user.set(null);
+      if (wasAuthenticated && !this.explicitSignOut) {
+        this._revokedNotice.set('Your session was ended. Please sign in again.');
+        this._modalOpen.set(true);
+        amplitude.setUserId(undefined);
+      }
       return;
     }
     this._user.set({
@@ -256,6 +318,8 @@ export class AuthService {
     const email = this.clerk?.user?.primaryEmailAddress?.emailAddress;
     if (email) amplitude.setUserId(email);
     amplitude.track('Signed In', { provider });
+    this._revokedNotice.set(null);
+    this.lastVerifiedAt = Date.now();
   }
 }
 

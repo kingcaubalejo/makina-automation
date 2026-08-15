@@ -47,28 +47,28 @@ interface TabDef {
             <svg class="tab-icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
               @switch (t.id) {
                 @case ('properties') {
-                  <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.7" />
-                  <line x1="12" y1="8" x2="12" y2="8.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-                  <path d="M11 11h1v6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+                  <circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.7" />
+                  <circle cx="12" cy="8" r="1" fill="currentColor" />
+                  <path d="M12 11v6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
                 }
                 @case ('simulate') {
-                  <path d="M7 5l11 7-11 7V5z" fill="currentColor" stroke="currentColor" stroke-width="1" stroke-linejoin="round" />
+                  <path d="M8 6.5v11l9-5.5-9-5.5z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
                 }
                 @case ('convert') {
-                  <path d="M3 9h13M14 6l3 3-3 3M21 15H8M11 18l-3-3 3-3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
+                  <path d="M5 9h11M14 6l3 3-3 3M19 15H8M11 18l-3-3 3-3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
                 }
                 @case ('regex') {
-                  <path d="M12 4v8M9 6l6 4M9 10l6-4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
-                  <circle cx="6" cy="18" r="1.6" fill="currentColor" />
+                  <path d="M12 6v6M9.4 7.5l5.2 3M9.4 10.5l5.2-3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+                  <circle cx="12" cy="17" r="1.2" fill="currentColor" />
                 }
                 @case ('tests') {
-                  <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.7" />
-                  <path d="M8 12l3 3 5-5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
+                  <circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.7" />
+                  <path d="M8.5 12l2.5 2.5L15.5 10" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
                 }
                 @case ('library') {
-                  <rect x="4" y="4" width="16" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.7" />
-                  <line x1="9" y1="4" x2="9" y2="20" stroke="currentColor" stroke-width="1.7" />
-                  <line x1="14" y1="4" x2="14" y2="20" stroke="currentColor" stroke-width="1.7" />
+                  <rect x="4.5" y="4.5" width="15" height="15" rx="2" fill="none" stroke="currentColor" stroke-width="1.7" />
+                  <line x1="9.5" y1="4.5" x2="9.5" y2="19.5" stroke="currentColor" stroke-width="1.7" />
+                  <line x1="14.5" y1="4.5" x2="14.5" y2="19.5" stroke="currentColor" stroke-width="1.7" />
                 }
               }
             </svg>
@@ -141,8 +141,8 @@ interface TabDef {
       .tabs {
         display: grid;
         grid-template-columns: repeat(6, 1fr);
-        gap: 2px;
-        padding: 6px;
+        gap: 0;
+        padding: 4px;
         background: var(--surface-2);
         border-radius: 12px 12px 0 0;
         border-bottom: 1px solid var(--border);
@@ -152,19 +152,19 @@ interface TabDef {
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        height: 32px;
+        height: 34px;
         border: none;
         border-radius: 8px;
         background: transparent;
         color: var(--text-muted);
         transition: background 120ms, color 120ms;
+        cursor: pointer;
       }
       .tab-icon { width: 16px; height: 16px; display: block; flex-shrink: 0; }
-      .tab:hover { background: var(--surface); color: var(--text); }
+      .tab:hover { color: var(--text); }
       .tab.active {
-        background: var(--surface);
+        background: color-mix(in srgb, var(--accent) 12%, var(--surface));
         color: var(--accent);
-        box-shadow: var(--shadow);
       }
       .tab.locked { opacity: 0.55; cursor: pointer; }
       .tab.locked:hover { background: var(--surface); color: var(--text); opacity: 0.75; }
@@ -251,10 +251,14 @@ export class InspectorComponent {
     return this.isLocked(t) ? `${t.label} — sign in to unlock` : t.label;
   }
 
-  protected selectTab(t: TabDef): void {
+  protected async selectTab(t: TabDef): Promise<void> {
     if (this.isLocked(t)) {
       this.auth.openModal();
       return;
+    }
+    if (t.requiresAuth) {
+      const ok = await this.auth.verifySession();
+      if (!ok) return;
     }
     this.active.set(t.id);
   }

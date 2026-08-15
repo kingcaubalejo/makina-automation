@@ -131,6 +131,51 @@ export class EditorStore {
     window.open(url, '_blank', 'noopener');
   }
 
+  listWorkspaces(): Array<{ id: string; name: string; states: number; current: boolean }> {
+    if (typeof window === 'undefined') return [];
+    const prefix = `${STORAGE_PREFIX}:document:`;
+    const currentId = this.workspaceId();
+    const out: Array<{ id: string; name: string; states: number; current: boolean }> = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key || !key.startsWith(prefix)) continue;
+      const id = key.slice(prefix.length);
+      let states = 0;
+      try {
+        const raw = localStorage.getItem(key);
+        if (raw) states = (JSON.parse(raw)?.states as unknown[] | undefined)?.length ?? 0;
+      } catch {
+        // ignore corrupt
+      }
+      const name = localStorage.getItem(`${STORAGE_PREFIX}:name:${id}`)
+        ?? (id === 'default' ? 'Main' : 'Untitled');
+      out.push({ id, name, states, current: id === currentId });
+    }
+    return out.sort((a, b) => {
+      if (a.current && !b.current) return -1;
+      if (!a.current && b.current) return 1;
+      return a.name.localeCompare(b.name);
+    });
+  }
+
+  switchWorkspace(id: string): void {
+    if (typeof window === 'undefined') return;
+    if (id === this.workspaceId()) return;
+    const url = window.location.pathname + (window.location.search ?? '') + '#w=' + id;
+    window.location.href = url;
+    window.location.reload();
+  }
+
+  deleteWorkspace(id: string): void {
+    if (typeof window === 'undefined') return;
+    try {
+      localStorage.removeItem(`${STORAGE_PREFIX}:document:${id}`);
+      localStorage.removeItem(`${STORAGE_PREFIX}:name:${id}`);
+    } catch {
+      // ignore
+    }
+  }
+
   workspaceStorageKey(suffix: string): string {
     return `${STORAGE_PREFIX}:${suffix}:${this.workspaceId()}`;
   }

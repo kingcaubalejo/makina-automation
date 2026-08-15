@@ -42,6 +42,9 @@ type ForgotStep = 'email' | 'reset';
             </div>
           </aside>
 
+          @if (auth.revokedNotice(); as notice) {
+            <div class="revoked" role="alert">{{ notice }}</div>
+          }
           @if (!auth.ready() && !auth.loadError()) {
             <div class="ready-banner" role="status" aria-live="polite">
               <span class="spinner" aria-hidden="true"></span>
@@ -224,6 +227,7 @@ type ForgotStep = 'email' | 'reset';
         display: grid;
         place-items: center;
         pointer-events: auto;
+        animation: modal-fade-in 180ms ease-out both;
       }
       [data-theme="dark"] .backdrop { background: rgba(0, 0, 0, 0.65); }
       .modal {
@@ -237,6 +241,19 @@ type ForgotStep = 'email' | 'reset';
         display: flex;
         flex-direction: column;
         gap: 14px;
+        animation: modal-rise-in 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
+        transform-origin: center;
+      }
+      @keyframes modal-fade-in {
+        from { opacity: 0; }
+        to   { opacity: 1; }
+      }
+      @keyframes modal-rise-in {
+        from { opacity: 0; transform: translateY(8px) scale(0.98); }
+        to   { opacity: 1; transform: translateY(0) scale(1); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .backdrop, .modal { animation: none; }
       }
       .head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
       .head-text { display: flex; flex-direction: column; gap: 2px; }
@@ -362,6 +379,15 @@ type ForgotStep = 'email' | 'reset';
         background: color-mix(in srgb, var(--danger) 10%, var(--surface-2));
         border: 1px solid var(--danger);
         padding: 6px 10px;
+        border-radius: 8px;
+      }
+      .revoked {
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--danger);
+        background: color-mix(in srgb, var(--danger) 12%, var(--surface-2));
+        border: 1px solid var(--danger);
+        padding: 10px 12px;
         border-radius: 8px;
       }
       .primary {
