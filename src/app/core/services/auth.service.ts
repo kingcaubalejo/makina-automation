@@ -199,6 +199,15 @@ export class AuthService {
   }): Promise<AuthResult> {
     const clerk = this.clerk;
     if (!clerk) return this.notReadyResult();
+    // If a Clerk session already exists (page reload, another tab, stale cookie),
+    // signUp.create() would throw "You're already signed in." Treat it as a
+    // no-op success: sync the user state and close the modal.
+    if (clerk.user) {
+      this.syncUser();
+      this._modalOpen.set(false);
+      this._revokedNotice.set(null);
+      return { ok: true };
+    }
     try {
       await clerk.client!.signUp.create({
         emailAddress: input.email.trim().toLowerCase(),
@@ -312,6 +321,12 @@ export class AuthService {
       firstName: u.firstName ?? '',
       lastName: u.lastName ?? '',
     });
+    // If the modal is open while an authenticated user exists, close it —
+    // there's nothing left for the user to do here.
+    if (this._modalOpen()) {
+      this._modalOpen.set(false);
+      this._revokedNotice.set(null);
+    }
   }
 
   private trackSignIn(provider: string): void {

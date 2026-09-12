@@ -585,6 +585,12 @@ export class AuthModalComponent {
       this.error.set(result.error);
       return;
     }
+    // If a session already existed, the service closed the modal and skipped
+    // signup — don't advance to the verify step; just reset local state.
+    if (this.auth.isAuthenticated()) {
+      this.closeAndReset();
+      return;
+    }
     this.error.set(null);
     this.verifyCode = '';
     this.mode.set('verify');
