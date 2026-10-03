@@ -1,6 +1,7 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  DestroyRef,
   computed,
   effect,
   inject,
@@ -299,6 +300,7 @@ export class TestsPanelComponent {
   protected readonly passCount = computed(() => this.results().filter((r) => r.pass).length);
 
   private persistTimer: ReturnType<typeof setTimeout> | undefined;
+  private readonly destroyRef = inject(DestroyRef);
 
   constructor() {
     effect(() => {
@@ -307,9 +309,16 @@ export class TestsPanelComponent {
       this.persistTimer = setTimeout(() => this.flush(), PERSIST_DEBOUNCE_MS);
     });
     if (typeof window !== 'undefined') {
-      window.addEventListener('beforeunload', () => this.flush());
-      document.addEventListener('visibilitychange', () => {
+      const onUnload = () => this.flush();
+      const onVisibility = () => {
         if (document.visibilityState === 'hidden') this.flush();
+      };
+      window.addEventListener('beforeunload', onUnload);
+      document.addEventListener('visibilitychange', onVisibility);
+      this.destroyRef.onDestroy(() => {
+        window.removeEventListener('beforeunload', onUnload);
+        document.removeEventListener('visibilitychange', onVisibility);
+        if (this.persistTimer) clearTimeout(this.persistTimer);
       });
     }
   }

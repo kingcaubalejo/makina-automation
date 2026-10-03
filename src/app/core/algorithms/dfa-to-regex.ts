@@ -84,7 +84,7 @@ function unionRegex(parts: string[]): string {
   if (filtered.length === 1) return filtered[0];
   const unique = [...new Set(filtered)];
   if (unique.length === 1) return unique[0];
-  return unique.map((p) => (needsParensInUnion(p) ? p : p)).join('|');
+  return unique.join('|');
 }
 
 function concatRegex(parts: string[]): string {
@@ -127,6 +127,3 @@ function isFullyParenthesised(r: string): boolean {
   return depth === 0;
 }
 
-function needsParensInUnion(_r: string): boolean {
-  return false;
-}
