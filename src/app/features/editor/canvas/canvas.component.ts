@@ -43,6 +43,7 @@ const ACCEPT_GAP = 4;
       (pointermove)="onCanvasPointerMove($event)"
       (pointerup)="onCanvasPointerUp($event)"
       (pointercancel)="onCanvasPointerUp($event)"
+      (pointerleave)="onCanvasPointerLeave()"
       (dblclick)="onDoubleClick($event)"
       (contextmenu)="onContextMenu($event)"
       [class.tool-state]="store.tool() === 'state'"
@@ -148,9 +149,10 @@ const ACCEPT_GAP = 4;
             [attr.height]="Math.abs(m.y1 - m.y0)"
           />
         }
+
       </svg>
 
-      <div class="hud">
+      <div class="hud" (pointerdown)="$event.stopPropagation()" (wheel)="$event.stopPropagation()">
         <button class="hud-btn" (click)="store.tidyLayout()" title="Tidy layout">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <line x1="3" y1="6" x2="21" y2="6"/>
@@ -671,7 +673,7 @@ export class CanvasComponent {
 
     if (tool === 'state') {
       const created = this.store.addState(world.x, world.y);
-      this.store.selectOnly([created.id]);
+      if (created) this.store.selectOnly([created.id]);
       return;
     }
 
@@ -741,6 +743,8 @@ export class CanvasComponent {
       });
     }
   }
+
+  protected onCanvasPointerLeave(): void {}
 
   protected onCanvasPointerUp(_ev: PointerEvent): void {
     if (!this.dragState) return;
@@ -851,20 +855,10 @@ export class CanvasComponent {
     this.store.toggleSelectTransition(id, ev.shiftKey);
   }
 
-  protected onDoubleClick(ev: MouseEvent): void {
-    if ((ev.target as Element).closest('.state')) return;
-    if ((ev.target as Element).closest('.transition')) {
-      const transitionEl = (ev.target as Element).closest('.transition');
-      if (!transitionEl) return;
-      // not implemented: edit by double-click on transition (handled in panel)
-      return;
-    }
-    const tool = this.store.tool();
-    if (tool !== 'state') {
-      const world = this.toWorld(ev);
-      const created = this.store.addState(world.x, world.y);
-      this.store.selectOnly([created.id]);
-    }
+  protected onDoubleClick(_ev: MouseEvent): void {
+    // Double-click on the empty canvas no longer adds a state. Pick the
+    // State tool (S) and click to add. Double-click on a state is handled by
+    // onStateDoubleClick (rename).
   }
 
   protected onContextMenu(ev: MouseEvent): void {

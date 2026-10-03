@@ -1,6 +1,7 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  DestroyRef,
   computed,
   effect,
   inject,
@@ -23,7 +24,6 @@ interface TestResult extends TestCase {
   pass: boolean;
 }
 
-const LEGACY_TESTS_KEY = 'automata-studio:tests';
 const PERSIST_DEBOUNCE_MS = 250;
 
 @Component({
@@ -41,8 +41,9 @@ const PERSIST_DEBOUNCE_MS = 250;
           </span>
         </div>
         <p class="desc">
-          Add input strings with their expected verdict. Hit
-          <strong>Run all</strong> to check the current automaton against the suite.
+          Add input strings with their expected verdict. Each row re-runs
+          automatically whenever the automaton or inputs change — the row's
+          dot turns green on pass, red on fail.
         </p>
 
         <div class="rows">
@@ -139,7 +140,7 @@ const PERSIST_DEBOUNCE_MS = 250;
       .rows { display: flex; flex-direction: column; gap: 4px; }
       .row {
         display: grid;
-        grid-template-columns: 14px 1fr 80px 60px 22px;
+        grid-template-columns: 14px minmax(0, 1fr) 72px 56px 22px;
         gap: 6px;
         align-items: center;
         padding: 6px 8px;
@@ -147,6 +148,7 @@ const PERSIST_DEBOUNCE_MS = 250;
         border: 1px solid var(--border);
         border-radius: 8px;
       }
+      .row .input, .row .expected { min-width: 0; }
       .row.pass { border-color: color-mix(in srgb, var(--success) 50%, var(--border)); }
       .row.fail { border-color: color-mix(in srgb, var(--danger) 50%, var(--border)); }
       .dot {
@@ -209,17 +211,19 @@ const PERSIST_DEBOUNCE_MS = 250;
 
       .add-row {
         display: grid;
-        grid-template-columns: 1fr 80px auto;
+        grid-template-columns: minmax(0, 1fr) 80px auto;
         gap: 6px;
         margin-top: 6px;
       }
       .add-row .input {
         background: var(--surface-2);
         border-color: var(--border);
+        min-width: 0;
       }
       .add-row .expected {
         background: var(--surface-2);
         border-color: var(--border);
+        min-width: 0;
       }
       .add {
         height: 28px;
@@ -298,6 +302,7 @@ export class TestsPanelComponent {
   protected readonly passCount = computed(() => this.results().filter((r) => r.pass).length);
 
   private persistTimer: ReturnType<typeof setTimeout> | undefined;
+  private readonly destroyRef = inject(DestroyRef);
 
   constructor() {
     effect(() => {
@@ -306,9 +311,16 @@ export class TestsPanelComponent {
       this.persistTimer = setTimeout(() => this.flush(), PERSIST_DEBOUNCE_MS);
     });
     if (typeof window !== 'undefined') {
-      window.addEventListener('beforeunload', () => this.flush());
-      document.addEventListener('visibilitychange', () => {
+      const onUnload = () => this.flush();
+      const onVisibility = () => {
         if (document.visibilityState === 'hidden') this.flush();
+      };
+      window.addEventListener('beforeunload', onUnload);
+      document.addEventListener('visibilitychange', onVisibility);
+      this.destroyRef.onDestroy(() => {
+        window.removeEventListener('beforeunload', onUnload);
+        document.removeEventListener('visibilitychange', onVisibility);
+        if (this.persistTimer) clearTimeout(this.persistTimer);
       });
     }
   }
@@ -376,13 +388,6 @@ export class TestsPanelComponent {
 
   private loadCases(): TestCase[] {
     try {
-      if (this.store.workspaceId() === 'default') {
-        const legacy = localStorage.getItem(LEGACY_TESTS_KEY);
-        if (legacy && !localStorage.getItem(this.storageKey)) {
-          localStorage.setItem(this.storageKey, legacy);
-          localStorage.removeItem(LEGACY_TESTS_KEY);
-        }
-      }
       const raw = localStorage.getItem(this.storageKey);
       if (!raw) return [];
       const parsed = JSON.parse(raw);

@@ -1,7 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { EditorStore } from '../../../core/services/editor-store';
-import { AuthService } from '../../../core/services/auth.service';
 import { PropertiesPanelComponent } from './properties-panel.component';
 import { ConversionPanelComponent } from '../../conversion/conversion-panel.component';
 import { SimulationPanelComponent } from '../../simulation/simulation-panel.component';
@@ -11,10 +10,11 @@ import { LibraryPanelComponent } from './library-panel.component';
 
 type Tab = 'properties' | 'simulate' | 'convert' | 'regex' | 'tests' | 'library';
 
+const COLLAPSED_STORAGE_KEY = 'makina:inspector:collapsed';
+
 interface TabDef {
   id: Tab;
   label: string;
-  requiresAuth?: boolean;
 }
 
 @Component({
@@ -30,18 +30,39 @@ interface TabDef {
     LibraryPanelComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
+  host: {
+    '[class.collapsed]': 'collapsed()',
+  },
   template: `
+    @if (collapsed()) {
+      <button
+        type="button"
+        class="expand-pill"
+        (click)="toggleCollapsed()"
+        title="Expand inspector"
+        aria-label="Expand inspector"
+      >
+        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+          <path
+            d="M9 6l6 6-6 6"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </svg>
+      </button>
+    } @else {
     <aside class="inspector">
       <nav class="tabs" role="tablist">
         @for (t of tabs; track t.id) {
           <button
             class="tab"
             [class.active]="active() === t.id"
-            [class.locked]="isLocked(t)"
             [attr.aria-selected]="active() === t.id"
-            [attr.aria-disabled]="isLocked(t) ? 'true' : null"
             (click)="selectTab(t)"
-            [title]="tooltip(t)"
+            [title]="t.label"
             role="tab"
           >
             <svg class="tab-icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
@@ -72,19 +93,31 @@ interface TabDef {
                 }
               }
             </svg>
-            @if (isLocked(t)) {
-              <span class="lock-badge" aria-label="Sign in to unlock" title="Sign in to unlock">
-                <svg viewBox="0 0 24 24" width="9" height="9" aria-hidden="true">
-                  <rect x="6" y="11" width="12" height="9" rx="2" fill="currentColor" />
-                  <path d="M8 11V8a4 4 0 018 0v3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-                </svg>
-              </span>
-            }
           </button>
         }
       </nav>
 
-      <div class="tab-label">{{ activeLabel() }}</div>
+      <div class="section-header">
+        <span class="tab-label">{{ activeLabel() }}</span>
+        <button
+          type="button"
+          class="collapse-btn"
+          (click)="toggleCollapsed()"
+          title="Collapse inspector"
+          aria-label="Collapse inspector"
+        >
+          <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+            <path
+              d="M15 6l-6 6 6 6"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </button>
+      </div>
 
       <div class="content">
         @switch (active()) {
@@ -115,6 +148,7 @@ interface TabDef {
         }
       </div>
     </aside>
+    }
   `,
   styles: [
     `
@@ -126,6 +160,28 @@ interface TabDef {
         width: 300px;
         pointer-events: auto;
         display: block;
+      }
+      :host.collapsed {
+        bottom: auto;
+        width: auto;
+      }
+      .expand-pill {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        border-radius: 999px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        color: var(--text-muted);
+        box-shadow: var(--shadow);
+        cursor: pointer;
+        transition: color 120ms, background 120ms;
+      }
+      .expand-pill:hover {
+        color: var(--accent);
+        background: color-mix(in srgb, var(--accent) 8%, var(--surface));
       }
       .inspector {
         background: var(--surface);
@@ -166,30 +222,36 @@ interface TabDef {
         background: color-mix(in srgb, var(--accent) 12%, var(--surface));
         color: var(--accent);
       }
-      .tab.locked { opacity: 0.55; cursor: pointer; }
-      .tab.locked:hover { background: var(--surface); color: var(--text); opacity: 0.75; }
-      .lock-badge {
-        position: absolute;
-        top: 2px;
-        right: 2px;
-        width: 13px;
-        height: 13px;
-        border-radius: 999px;
-        background: var(--surface);
-        border: 1px solid var(--border);
-        color: var(--text-muted);
-        display: inline-flex;
+      .section-header {
+        display: flex;
         align-items: center;
-        justify-content: center;
+        justify-content: space-between;
+        padding: 8px 8px 0 16px;
+        gap: 8px;
       }
-      .tab.locked:hover .lock-badge { color: var(--accent); border-color: var(--accent); }
       .tab-label {
         font-family: var(--serif);
         font-style: italic;
         font-size: 12px;
         color: var(--text-muted);
-        padding: 8px 16px 0;
         letter-spacing: 0.005em;
+      }
+      .collapse-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 22px;
+        height: 22px;
+        border-radius: 999px;
+        background: transparent;
+        border: none;
+        color: var(--text-muted);
+        cursor: pointer;
+        transition: background 120ms, color 120ms;
+      }
+      .collapse-btn:hover {
+        background: var(--surface-2);
+        color: var(--text);
       }
       .content {
         flex: 1;
@@ -231,35 +293,37 @@ interface TabDef {
 })
 export class InspectorComponent {
   protected readonly store = inject(EditorStore);
-  protected readonly auth = inject(AuthService);
   protected readonly active = signal<Tab>('properties');
+  protected readonly collapsed = signal<boolean>(this.readCollapsed());
+
+  private readCollapsed(): boolean {
+    try {
+      return localStorage.getItem(COLLAPSED_STORAGE_KEY) === '1';
+    } catch {
+      return false;
+    }
+  }
+
+  protected toggleCollapsed(): void {
+    const next = !this.collapsed();
+    this.collapsed.set(next);
+    try {
+      localStorage.setItem(COLLAPSED_STORAGE_KEY, next ? '1' : '0');
+    } catch {
+      // storage unavailable — keep the in-memory toggle
+    }
+  }
 
   protected readonly tabs: TabDef[] = [
-    { id: 'properties', label: 'Inspect'                      },
-    { id: 'simulate',   label: 'Simulate'                     },
-    { id: 'convert',    label: 'Convert', requiresAuth: true  },
-    { id: 'regex',      label: 'Regex',   requiresAuth: true  },
-    { id: 'tests',      label: 'Tests',   requiresAuth: true  },
-    { id: 'library',    label: 'Library', requiresAuth: true  },
+    { id: 'properties', label: 'Inspect'  },
+    { id: 'simulate',   label: 'Simulate' },
+    { id: 'convert',    label: 'Convert'  },
+    { id: 'regex',      label: 'Regex'    },
+    { id: 'tests',      label: 'Tests'    },
+    { id: 'library',    label: 'Library'  },
   ];
 
-  protected isLocked(t: TabDef): boolean {
-    return !!t.requiresAuth && !this.auth.isAuthenticated();
-  }
-
-  protected tooltip(t: TabDef): string {
-    return this.isLocked(t) ? `${t.label} — sign in to unlock` : t.label;
-  }
-
-  protected async selectTab(t: TabDef): Promise<void> {
-    if (this.isLocked(t)) {
-      this.auth.openModal();
-      return;
-    }
-    if (t.requiresAuth) {
-      const ok = await this.auth.verifySession();
-      if (!ok) return;
-    }
+  protected selectTab(t: TabDef): void {
     this.active.set(t.id);
   }
 
@@ -273,4 +337,3 @@ export class InspectorComponent {
     return this.tabs.find((t) => t.id === id)?.label ?? '';
   });
 }
-

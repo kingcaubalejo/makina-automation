@@ -1,6 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { EditorStore, Tool } from '../../../core/services/editor-store';
-import { AuthService } from '../../../core/services/auth.service';
 
 interface ToolDef {
   id: Tool;
@@ -35,7 +34,7 @@ interface ToolDef {
             (blur)="onWorkspaceBlur($event)"
             spellcheck="false"
             aria-label="Workspace name"
-            title="Workspace name (rename this window)"
+            title="Workspace name"
           />
         </div>
       </div>
@@ -81,7 +80,7 @@ interface ToolDef {
       </p>
     </div>
 
-    <!-- top-right: actions + account -->
+    <!-- top-right: actions -->
     <div class="cluster top-right">
       <div class="card action-row">
         <button class="ghost" (click)="store.undo()" [disabled]="!store.canUndo()" title="Undo (⌘Z)">
@@ -102,13 +101,6 @@ interface ToolDef {
             <path d="M3 6h18M8 6V4h8v2M5 6l1 14h12l1-14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
           </svg>
         </button>
-        <button class="ghost" (click)="store.openNewWindow()" title="Open a new workspace in a new window">
-          <svg class="icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-            <rect x="4" y="6" width="14" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.7" />
-            <path d="M14 10h6V4h-6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
-            <path d="M16 6l4 -4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
-          </svg>
-        </button>
         <span class="divider"></span>
         <button class="ghost" (click)="store.toggleTheme()" [title]="'Toggle theme (currently ' + store.theme() + ')'">
           @if (store.theme() === 'dark') {
@@ -123,21 +115,6 @@ interface ToolDef {
           }
         </button>
       </div>
-
-      @if (auth.isAuthenticated()) {
-        <button class="account-btn card" (click)="auth.logout()" [title]="'Signed in as ' + auth.currentUser()?.email + ' — click to sign out'">
-          <span class="avatar" aria-hidden="true">{{ initials() }}</span>
-          <span class="account-label">Sign out</span>
-        </button>
-      } @else {
-        <button class="account-btn primary card" (click)="auth.openModal()" title="Sign in">
-          <svg class="icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-            <path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
-            <path d="M10 17l5-5-5-5M15 12H3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
-          </svg>
-          <span class="account-label">Sign in</span>
-        </button>
-      }
     </div>
   `,
   styles: [
@@ -296,44 +273,10 @@ interface ToolDef {
         margin: 0 4px;
       }
 
-      /* account button */
-      .account-btn {
-        gap: 8px;
-        padding: 6px 12px;
-        height: 38px;
-        border-radius: 999px;
-        cursor: pointer;
-        font-size: 13px;
-        font-weight: 500;
-        color: var(--text);
-      }
-      .account-btn:hover { background: var(--surface-2); }
-      .account-btn.primary {
-        background: var(--accent);
-        border-color: var(--accent);
-        color: #fff;
-        box-shadow: var(--shadow);
-      }
-      .account-btn.primary:hover { filter: brightness(1.05); background: var(--accent); }
-      .avatar {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 22px;
-        height: 22px;
-        border-radius: 999px;
-        background: var(--accent-soft);
-        color: var(--accent);
-        font-size: 11px;
-        font-weight: 600;
-        text-transform: uppercase;
-      }
       .icon { width: 16px; height: 16px; display: block; flex-shrink: 0; }
 
       @media (max-width: 900px) {
         .tool-hint { display: none; }
-        .account-label { display: none; }
-        .account-btn { padding: 6px; width: 38px; height: 38px; justify-content: center; }
       }
       @media (max-width: 620px) {
         .cluster.top-left .brand-text strong { display: none; }
@@ -345,7 +288,6 @@ interface ToolDef {
 })
 export class ToolbarComponent {
   protected readonly store = inject(EditorStore);
-  protected readonly auth = inject(AuthService);
 
   protected readonly tools: ToolDef[] = [
     { id: 'select',     label: 'Select',     hint: 'V' },
@@ -360,18 +302,9 @@ export class ToolbarComponent {
     return active?.hint ?? 'V';
   });
 
-  protected readonly initials = computed(() => {
-    const user = this.auth.currentUser();
-    if (!user) return '?';
-    const f = (user.firstName ?? '').trim()[0] ?? '';
-    const l = (user.lastName ?? '').trim()[0] ?? '';
-    const fallback = (user.email ?? '?').trim()[0] ?? '?';
-    return (f + l) || fallback;
-  });
-
   protected onWorkspaceInput(ev: Event): void {
     const value = (ev.target as HTMLInputElement).value;
-    this.store.workspaceName.set(value || 'Untitled');
+    this.store.setWorkspaceName(value || 'Untitled');
   }
 
   protected onWorkspaceBlur(ev: Event): void {

@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, signal } from '@angular/core';
 import { EditorStore } from '../../core/services/editor-store';
 import { ConversionResult, nfaToDfa } from '../../core/algorithms/subset-construction';
 import { minimizeDfa, MinimizationResult } from '../../core/algorithms/minimize';
@@ -231,6 +231,13 @@ export class ConversionPanelComponent {
   protected readonly minimization = signal<MinimizationResult | null>(null);
   protected readonly regex = signal<string | null>(null);
   protected readonly copied = signal(false);
+  private copiedTimer: ReturnType<typeof setTimeout> | undefined;
+
+  constructor() {
+    inject(DestroyRef).onDestroy(() => {
+      if (this.copiedTimer) clearTimeout(this.copiedTimer);
+    });
+  }
 
   protected readonly canConvert = computed(() => this.store.validation().hasStart);
   protected readonly isDfa = computed(() => this.store.validation().isDfa && this.store.states().length > 0);
@@ -277,7 +284,8 @@ export class ConversionPanelComponent {
     try {
       await navigator.clipboard.writeText(re);
       this.copied.set(true);
-      setTimeout(() => this.copied.set(false), 1200);
+      if (this.copiedTimer) clearTimeout(this.copiedTimer);
+      this.copiedTimer = setTimeout(() => this.copied.set(false), 1200);
     } catch {
       // ignore
     }

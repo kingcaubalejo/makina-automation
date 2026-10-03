@@ -1,16 +1,17 @@
-import { computed, effect, Injectable, signal } from '@angular/core';
+import { computed, effect, Injectable, NgZone, inject, signal } from '@angular/core';
 import {
+  alphabetOf,
   Automaton,
   AutomatonState,
   AutomatonTransition,
-  emptyAutomaton,
   EPSILON,
+  MAX_IMPORT_SIZE,
   nextStateLabel,
+  parseAutomaton,
   StateId,
   TransitionId,
   uid,
   validate,
-  alphabetOf,
 } from '../models/automaton';
 import { autoLayout } from '../algorithms/auto-layout';
 
@@ -27,35 +28,43 @@ export interface Viewport {
   scale: number;
 }
 
-interface Snapshot {
+const STORAGE_PREFIX = 'makina';
+const THEME_STORAGE_KEY = 'makina:theme';
+const DOC_STORAGE_KEY = 'makina:doc:v1';
+const UNDO_LIMIT = 100;
+const COALESCE_MS = 500;
+const PERSIST_DEBOUNCE_MS = 300;
+
+interface DocSnapshot {
   states: AutomatonState[];
   transitions: AutomatonTransition[];
+  workspaceName: string;
 }
 
-const HISTORY_LIMIT = 100;
-const STORAGE_PREFIX = 'makina';
-const LEGACY_DOC_KEY = 'automata-studio:document';
-const MAX_IMPORT_SIZE = 1_000_000;
-const MAX_STATES = 5000;
-const MAX_TRANSITIONS = 10_000;
-const MAX_LABEL_LENGTH = 200;
-const MAX_SYMBOL_LENGTH = 64;
-const PERSIST_DEBOUNCE_MS = 250;
-const THEME_STORAGE_KEY = 'makina:theme';
+interface PersistedDoc extends DocSnapshot {
+  version: 1;
+}
 
 @Injectable({ providedIn: 'root' })
 export class EditorStore {
-  readonly states = signal<AutomatonState[]>([]);
-  readonly transitions = signal<AutomatonTransition[]>([]);
+  private readonly zone = inject(NgZone);
+
   readonly tool = signal<Tool>('select');
   readonly selection = signal<Selection>({ stateIds: [], transitionIds: [] });
   readonly viewport = signal<Viewport>({ x: 0, y: 0, scale: 1 });
   readonly transitionDraft = signal<{ fromId: StateId } | null>(null);
   readonly activeStates = signal<Set<StateId>>(new Set());
   readonly theme = signal<'light' | 'dark'>(this.readInitialTheme());
-  readonly workspaceId = signal<string>(this.readWorkspaceIdFromUrl());
-  readonly workspaceName = signal<string>('Untitled');
   readonly simulationInput = signal<string>('');
+
+  readonly states = signal<AutomatonState[]>([]);
+  readonly transitions = signal<AutomatonTransition[]>([]);
+  readonly workspaceName = signal<string>('Untitled');
+
+  readonly documentReset = signal(0);
+
+  readonly undoAvailable = signal(false);
+  readonly redoAvailable = signal(false);
 
   readonly automaton = computed<Automaton>(() => ({
     states: this.states(),
@@ -73,29 +82,15 @@ export class EditorStore {
     return this.transitions().filter((t) => ids.has(t.id));
   });
 
-  private undoStack: Snapshot[] = [];
-  private redoStack: Snapshot[] = [];
-
-  private docTimer: ReturnType<typeof setTimeout> | undefined;
-  private nameTimer: ReturnType<typeof setTimeout> | undefined;
+  private undoStack: DocSnapshot[] = [];
+  private redoStack: DocSnapshot[] = [];
+  private lastCoalesceKey: string | null = null;
+  private lastCommitAt = 0;
+  private persistTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor() {
-    this.load();
-    effect(() => {
-      // touch signals so the effect re-runs on change
-      this.states();
-      this.transitions();
-      if (this.docTimer) clearTimeout(this.docTimer);
-      this.docTimer = setTimeout(() => this.flushDoc(), PERSIST_DEBOUNCE_MS);
-    });
-    effect(() => {
-      const name = this.workspaceName();
-      if (this.nameTimer) clearTimeout(this.nameTimer);
-      this.nameTimer = setTimeout(() => this.flushName(), PERSIST_DEBOUNCE_MS);
-      if (typeof document !== 'undefined') {
-        document.title = `${name} · Makina`;
-      }
-    });
+    this.loadFromStorage();
+
     effect(() => {
       const t = this.theme();
       if (typeof document !== 'undefined') {
@@ -107,90 +102,27 @@ export class EditorStore {
         // ignore quota
       }
     });
-    if (typeof window !== 'undefined') {
-      const flushAll = () => {
-        this.flushDoc();
-        this.flushName();
-      };
-      window.addEventListener('beforeunload', flushAll);
-      document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'hidden') flushAll();
-      });
-    }
-  }
-
-  setWorkspaceName(name: string): void {
-    const trimmed = name.trim();
-    this.workspaceName.set(trimmed || 'Untitled');
-  }
-
-  openNewWindow(): void {
-    if (typeof window === 'undefined') return;
-    const id = 'w_' + Math.random().toString(36).slice(2, 9);
-    const url = window.location.pathname + (window.location.search ?? '') + '#w=' + id;
-    window.open(url, '_blank', 'noopener');
-  }
-
-  listWorkspaces(): Array<{ id: string; name: string; states: number; current: boolean }> {
-    if (typeof window === 'undefined') return [];
-    const prefix = `${STORAGE_PREFIX}:document:`;
-    const currentId = this.workspaceId();
-    const out: Array<{ id: string; name: string; states: number; current: boolean }> = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (!key || !key.startsWith(prefix)) continue;
-      const id = key.slice(prefix.length);
-      let states = 0;
-      try {
-        const raw = localStorage.getItem(key);
-        if (raw) states = (JSON.parse(raw)?.states as unknown[] | undefined)?.length ?? 0;
-      } catch {
-        // ignore corrupt
+    effect(() => {
+      const name = this.workspaceName();
+      if (typeof document !== 'undefined') {
+        document.title = `${name} · Makina`;
       }
-      const name = localStorage.getItem(`${STORAGE_PREFIX}:name:${id}`)
-        ?? (id === 'default' ? 'Main' : 'Untitled');
-      out.push({ id, name, states, current: id === currentId });
-    }
-    return out.sort((a, b) => {
-      if (a.current && !b.current) return -1;
-      if (!a.current && b.current) return 1;
-      return a.name.localeCompare(b.name);
+    });
+    effect(() => {
+      // Watch all persisted fields so any change schedules a save.
+      this.states();
+      this.transitions();
+      this.workspaceName();
+      this.schedulePersist();
     });
   }
 
-  switchWorkspace(id: string): void {
-    if (typeof window === 'undefined') return;
-    if (id === this.workspaceId()) return;
-    const url = window.location.pathname + (window.location.search ?? '') + '#w=' + id;
-    window.location.href = url;
-    window.location.reload();
-  }
-
-  deleteWorkspace(id: string): void {
-    if (typeof window === 'undefined') return;
-    try {
-      localStorage.removeItem(`${STORAGE_PREFIX}:document:${id}`);
-      localStorage.removeItem(`${STORAGE_PREFIX}:name:${id}`);
-    } catch {
-      // ignore
-    }
+  workspaceId(): string {
+    return 'local';
   }
 
   workspaceStorageKey(suffix: string): string {
-    return `${STORAGE_PREFIX}:${suffix}:${this.workspaceId()}`;
-  }
-
-  private docKey(): string {
-    return `${STORAGE_PREFIX}:document:${this.workspaceId()}`;
-  }
-  private nameKey(): string {
-    return `${STORAGE_PREFIX}:name:${this.workspaceId()}`;
-  }
-
-  private readWorkspaceIdFromUrl(): string {
-    if (typeof window === 'undefined') return 'default';
-    const m = window.location.hash.match(/w=([a-zA-Z0-9_-]+)/);
-    return m ? m[1] : 'default';
+    return `${STORAGE_PREFIX}:${suffix}:local`;
   }
 
   private readInitialTheme(): 'light' | 'dark' {
@@ -205,6 +137,126 @@ export class EditorStore {
       return 'dark';
     }
     return 'light';
+  }
+
+  private loadFromStorage(): void {
+    if (typeof localStorage === 'undefined') return;
+    let raw: string | null = null;
+    try {
+      raw = localStorage.getItem(DOC_STORAGE_KEY);
+    } catch {
+      return;
+    }
+    if (!raw) return;
+    try {
+      const parsed = JSON.parse(raw) as PersistedDoc;
+      if (parsed?.version !== 1) return;
+      const auto = parseAutomaton({ states: parsed.states, transitions: parsed.transitions });
+      this.states.set(auto.states);
+      this.transitions.set(auto.transitions);
+      if (typeof parsed.workspaceName === 'string' && parsed.workspaceName.trim()) {
+        this.workspaceName.set(parsed.workspaceName);
+      }
+    } catch {
+      // corrupt — ignore and start fresh
+    }
+  }
+
+  private schedulePersist(): void {
+    if (typeof localStorage === 'undefined') return;
+    if (this.persistTimer) clearTimeout(this.persistTimer);
+    this.persistTimer = setTimeout(() => this.flushPersist(), PERSIST_DEBOUNCE_MS);
+  }
+
+  private flushPersist(): void {
+    this.persistTimer = null;
+    try {
+      const payload: PersistedDoc = {
+        version: 1,
+        states: this.states(),
+        transitions: this.transitions(),
+        workspaceName: this.workspaceName(),
+      };
+      localStorage.setItem(DOC_STORAGE_KEY, JSON.stringify(payload));
+    } catch {
+      // ignore quota
+    }
+  }
+
+  private snapshot(): DocSnapshot {
+    return {
+      states: this.states().map((s) => ({ ...s })),
+      transitions: this.transitions().map((t) => ({ ...t, symbols: [...t.symbols] })),
+      workspaceName: this.workspaceName(),
+    };
+  }
+
+  private restore(snap: DocSnapshot): void {
+    this.zone.run(() => {
+      this.states.set(snap.states.map((s) => ({ ...s })));
+      this.transitions.set(snap.transitions.map((t) => ({ ...t, symbols: [...t.symbols] })));
+      this.workspaceName.set(snap.workspaceName);
+      const liveStateIds = new Set(snap.states.map((s) => s.id));
+      const liveTransitionIds = new Set(snap.transitions.map((t) => t.id));
+      const sel = this.selection();
+      this.selection.set({
+        stateIds: sel.stateIds.filter((id) => liveStateIds.has(id)),
+        transitionIds: sel.transitionIds.filter((id) => liveTransitionIds.has(id)),
+      });
+      this.activeStates.set(new Set());
+      this.transitionDraft.set(null);
+    });
+  }
+
+  private commit(coalesceKey?: string): void {
+    const now = Date.now();
+    if (
+      coalesceKey &&
+      this.lastCoalesceKey === coalesceKey &&
+      now - this.lastCommitAt < COALESCE_MS
+    ) {
+      this.lastCommitAt = now;
+      return;
+    }
+    this.undoStack.push(this.snapshot());
+    if (this.undoStack.length > UNDO_LIMIT) this.undoStack.shift();
+    this.redoStack = [];
+    this.lastCommitAt = now;
+    this.lastCoalesceKey = coalesceKey ?? null;
+    this.updateUndoState();
+  }
+
+  private updateUndoState(): void {
+    this.zone.run(() => {
+      this.undoAvailable.set(this.undoStack.length > 0);
+      this.redoAvailable.set(this.redoStack.length > 0);
+    });
+  }
+
+  undo(): void {
+    const prev = this.undoStack.pop();
+    if (!prev) return;
+    this.redoStack.push(this.snapshot());
+    this.restore(prev);
+    this.lastCoalesceKey = null;
+    this.updateUndoState();
+  }
+
+  redo(): void {
+    const next = this.redoStack.pop();
+    if (!next) return;
+    this.undoStack.push(this.snapshot());
+    this.restore(next);
+    this.lastCoalesceKey = null;
+    this.updateUndoState();
+  }
+
+  canUndo(): boolean {
+    return this.undoAvailable();
+  }
+
+  canRedo(): boolean {
+    return this.redoAvailable();
   }
 
   setTool(tool: Tool): void {
@@ -280,54 +332,69 @@ export class EditorStore {
     });
   }
 
-  addState(x: number, y: number): AutomatonState {
-    this.snapshot();
-    const auto = this.automaton();
-    const isFirst = auto.states.length === 0;
-    const newState: AutomatonState = {
-      id: uid('s'),
-      label: nextStateLabel(auto),
+  addState(x: number, y: number): AutomatonState | null {
+    this.commit();
+    const isFirst = this.states().length === 0;
+    const id = uid('s');
+    const label = nextStateLabel(this.automaton());
+    const state: AutomatonState = {
+      id,
+      label,
       x,
       y,
       isStart: isFirst,
       isAccept: false,
     };
-    this.states.update((arr) => [...arr, newState]);
-    return newState;
+    this.states.update((cur) => [...cur, state]);
+    return state;
   }
 
-  moveState(id: StateId, x: number, y: number, snapshot = false): void {
-    if (snapshot) this.snapshot();
-    this.states.update((arr) => arr.map((s) => (s.id === id ? { ...s, x, y } : s)));
+  moveState(id: StateId, x: number, y: number, _snapshot = false): void {
+    this.commit(`move:${id}`);
+    this.states.update((cur) =>
+      cur.map((s) => (s.id === id ? { ...s, x, y } : s)),
+    );
   }
 
   deleteSelected(): void {
     const sel = this.selection();
     if (!sel.stateIds.length && !sel.transitionIds.length) return;
-    this.snapshot();
+    this.commit();
     const stateIds = new Set(sel.stateIds);
     const transIds = new Set(sel.transitionIds);
-    this.states.update((arr) => arr.filter((s) => !stateIds.has(s.id)));
-    this.transitions.update((arr) =>
-      arr.filter((t) => !transIds.has(t.id) && !stateIds.has(t.fromId) && !stateIds.has(t.toId))
+    const hadStates = this.states().length > 0;
+    this.states.update((cur) =>
+      cur.map((s) => (stateIds.has(s.id) && s.isStart ? { ...s, isStart: false } : s))
+        .filter((s) => !stateIds.has(s.id)),
     );
+    this.transitions.update((cur) =>
+      cur.filter((t) => !transIds.has(t.id) && !stateIds.has(t.fromId) && !stateIds.has(t.toId)),
+    );
+    if (hadStates && this.states().length === 0) {
+      this.documentReset.update((n) => n + 1);
+    }
     this.clearSelection();
   }
 
   setStateLabel(id: StateId, label: string): void {
-    this.snapshot();
-    this.states.update((arr) => arr.map((s) => (s.id === id ? { ...s, label } : s)));
+    this.commit(`label:${id}`);
+    this.states.update((cur) => cur.map((s) => (s.id === id ? { ...s, label } : s)));
   }
 
   setStart(id: StateId): void {
-    this.snapshot();
-    this.states.update((arr) => arr.map((s) => ({ ...s, isStart: s.id === id })));
+    if (!this.states().some((s) => s.id === id)) return;
+    this.commit();
+    this.states.update((cur) =>
+      cur.map((s) => ({ ...s, isStart: s.id === id })),
+    );
   }
 
   toggleAccept(id: StateId): void {
-    this.snapshot();
-    this.states.update((arr) =>
-      arr.map((s) => (s.id === id ? { ...s, isAccept: !s.isAccept } : s))
+    const target = this.states().find((s) => s.id === id);
+    if (!target) return;
+    this.commit();
+    this.states.update((cur) =>
+      cur.map((s) => (s.id === id ? { ...s, isAccept: !s.isAccept } : s)),
     );
   }
 
@@ -342,69 +409,102 @@ export class EditorStore {
   completeTransition(toId: StateId, symbols: string[] = ['a']): AutomatonTransition | null {
     const draft = this.transitionDraft();
     if (!draft) return null;
-    this.snapshot();
-    const cleaned = symbols.length ? symbols : ['a'];
+    const cleaned = unique((symbols.length ? symbols : ['a']).filter((s) => s.length > 0));
+    if (cleaned.length === 0) {
+      this.transitionDraft.set(null);
+      return null;
+    }
+
+    this.commit();
     const existing = this.transitions().find(
-      (t) => t.fromId === draft.fromId && t.toId === toId
+      (t) => t.fromId === draft.fromId && t.toId === toId,
     );
+
     let result: AutomatonTransition;
     if (existing) {
       const merged = unique([...existing.symbols, ...cleaned]);
-      this.transitions.update((arr) =>
-        arr.map((t) => (t.id === existing.id ? { ...t, symbols: merged } : t))
-      );
       result = { ...existing, symbols: merged };
+      this.transitions.update((cur) =>
+        cur.map((t) => (t.id === existing.id ? result : t)),
+      );
     } else {
-      result = { id: uid('t'), fromId: draft.fromId, toId, symbols: cleaned };
-      this.transitions.update((arr) => [...arr, result]);
+      result = {
+        id: uid('t'),
+        fromId: draft.fromId,
+        toId,
+        symbols: cleaned,
+      };
+      this.transitions.update((cur) => [...cur, result]);
     }
     this.transitionDraft.set(null);
     return result;
   }
 
   setTransitionSymbols(id: TransitionId, symbols: string[]): void {
-    this.snapshot();
+    const target = this.transitions().find((t) => t.id === id);
+    if (!target) return;
     const cleaned = unique(symbols.filter((s) => s.length > 0));
+    this.commit(`transition-symbols:${id}`);
     if (cleaned.length === 0) {
-      this.transitions.update((arr) => arr.filter((t) => t.id !== id));
+      this.transitions.update((cur) => cur.filter((t) => t.id !== id));
       this.selection.update((cur) => ({
         stateIds: cur.stateIds,
         transitionIds: cur.transitionIds.filter((x) => x !== id),
       }));
       return;
     }
-    this.transitions.update((arr) =>
-      arr.map((t) => (t.id === id ? { ...t, symbols: cleaned } : t))
+    this.transitions.update((cur) =>
+      cur.map((t) => (t.id === id ? { ...t, symbols: cleaned } : t)),
     );
   }
 
-  loadAutomaton(a: Automaton, replaceHistory = false): void {
-    if (!replaceHistory) this.snapshot();
-    this.states.set(a.states.map((s) => ({ ...s })));
+  loadAutomaton(a: Automaton, _replaceHistory = false): void {
+    this.commit();
+    const states = a.states.map((s) => ({ ...s }));
+    if (states.length > 0) {
+      // Translate so the bbox is centered past the ~316px inspector overlay.
+      // Without this, loaded automata that use small world coordinates
+      // (e.g. a 1-state DFA at (200, 320)) render underneath the inspector
+      // and the canvas appears empty.
+      const xs = states.map((s) => s.x);
+      const ys = states.map((s) => s.y);
+      const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+      const cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+      const dx = 640 - cx;
+      const dy = 400 - cy;
+      for (const s of states) {
+        s.x += dx;
+        s.y += dy;
+      }
+    }
+    this.states.set(states);
     this.transitions.set(a.transitions.map((t) => ({ ...t, symbols: [...t.symbols] })));
     this.clearSelection();
     this.activeStates.set(new Set());
-    if (replaceHistory) {
-      this.undoStack = [];
-      this.redoStack = [];
-    }
   }
 
   clear(): void {
-    this.snapshot();
+    const hadStates = this.states().length > 0;
+    this.commit();
     this.states.set([]);
     this.transitions.set([]);
     this.clearSelection();
     this.activeStates.set(new Set());
     this.simulationInput.set('');
+    if (hadStates) this.documentReset.update((n) => n + 1);
   }
 
   tidyLayout(): void {
     if (this.states().length === 0) return;
-    this.snapshot();
     const laid = autoLayout(this.automaton());
-    this.states.set(laid.states);
-    this.transitions.set(laid.transitions);
+    this.commit();
+    const posById = new Map(laid.states.map((s) => [s.id, { x: s.x, y: s.y }]));
+    this.states.update((cur) =>
+      cur.map((s) => {
+        const pos = posById.get(s.id);
+        return pos ? { ...s, x: pos.x, y: pos.y } : s;
+      }),
+    );
   }
 
   setActiveStates(ids: Iterable<StateId>): void {
@@ -415,11 +515,18 @@ export class EditorStore {
     this.activeStates.set(new Set());
   }
 
+  setWorkspaceName(name: string): void {
+    const trimmed = name.trim() || 'Untitled';
+    if (trimmed === this.workspaceName()) return;
+    this.commit('workspace-name');
+    this.workspaceName.set(trimmed);
+  }
+
   exportJson(): string {
     return JSON.stringify(
       { version: 1, automaton: this.automaton() },
       null,
-      2
+      2,
     );
   }
 
@@ -428,109 +535,12 @@ export class EditorStore {
       throw new Error('Import file is too large.');
     }
     const parsed = JSON.parse(text);
-    const candidate = parsed && (parsed as { automaton?: unknown }).automaton
-      ? (parsed as { automaton: unknown }).automaton
-      : parsed;
+    const candidate =
+      parsed && (parsed as { automaton?: unknown }).automaton
+        ? (parsed as { automaton: unknown }).automaton
+        : parsed;
     const auto = parseAutomaton(candidate);
     this.loadAutomaton(auto, true);
-  }
-
-  undo(): void {
-    const prev = this.undoStack.pop();
-    if (!prev) return;
-    this.redoStack.push(this.cloneSnapshot());
-    this.states.set(prev.states);
-    this.transitions.set(prev.transitions);
-    this.clearSelection();
-  }
-
-  redo(): void {
-    const next = this.redoStack.pop();
-    if (!next) return;
-    this.undoStack.push(this.cloneSnapshot());
-    this.states.set(next.states);
-    this.transitions.set(next.transitions);
-    this.clearSelection();
-  }
-
-  canUndo(): boolean {
-    return this.undoStack.length > 0;
-  }
-
-  canRedo(): boolean {
-    return this.redoStack.length > 0;
-  }
-
-  private snapshot(): void {
-    this.undoStack.push(this.cloneSnapshot());
-    if (this.undoStack.length > HISTORY_LIMIT) this.undoStack.shift();
-    this.redoStack = [];
-  }
-
-  private cloneSnapshot(): Snapshot {
-    return {
-      states: this.states().map((s) => ({ ...s })),
-      transitions: this.transitions().map((t) => ({ ...t, symbols: [...t.symbols] })),
-    };
-  }
-
-  private flushDoc(): void {
-    if (this.docTimer) {
-      clearTimeout(this.docTimer);
-      this.docTimer = undefined;
-    }
-    try {
-      localStorage.setItem(
-        this.docKey(),
-        JSON.stringify({ states: this.states(), transitions: this.transitions() }),
-      );
-    } catch {
-      // ignore quota
-    }
-  }
-
-  private flushName(): void {
-    if (this.nameTimer) {
-      clearTimeout(this.nameTimer);
-      this.nameTimer = undefined;
-    }
-    try {
-      localStorage.setItem(this.nameKey(), this.workspaceName());
-    } catch {
-      // ignore quota
-    }
-  }
-
-  private load(): void {
-    try {
-      if (this.workspaceId() === 'default') {
-        const legacy = localStorage.getItem(LEGACY_DOC_KEY);
-        if (legacy && !localStorage.getItem(this.docKey())) {
-          localStorage.setItem(this.docKey(), legacy);
-          localStorage.removeItem(LEGACY_DOC_KEY);
-        }
-      }
-      const raw = localStorage.getItem(this.docKey());
-      if (raw && raw.length <= MAX_IMPORT_SIZE) {
-        try {
-          const auto = parseAutomaton(JSON.parse(raw));
-          this.states.set(auto.states);
-          this.transitions.set(auto.transitions);
-        } catch {
-          // corrupted document; start fresh rather than crash
-        }
-      }
-      const storedName = localStorage.getItem(this.nameKey());
-      if (storedName) {
-        this.workspaceName.set(storedName);
-      } else if (this.workspaceId() !== 'default') {
-        this.workspaceName.set('Untitled');
-      } else {
-        this.workspaceName.set('Main');
-      }
-    } catch {
-      // ignore
-    }
   }
 }
 
@@ -540,94 +550,6 @@ function clamp(v: number, min: number, max: number): number {
 
 function unique<T>(arr: T[]): T[] {
   return [...new Set(arr)];
-}
-
-function parseAutomaton(value: unknown): Automaton {
-  if (!value || typeof value !== 'object') {
-    throw new Error('Invalid automaton file.');
-  }
-  const obj = value as { states?: unknown; transitions?: unknown };
-  if (!Array.isArray(obj.states) || !Array.isArray(obj.transitions)) {
-    throw new Error('Invalid automaton file.');
-  }
-  if (obj.states.length > MAX_STATES) {
-    throw new Error(`Too many states (max ${MAX_STATES}).`);
-  }
-  if (obj.transitions.length > MAX_TRANSITIONS) {
-    throw new Error(`Too many transitions (max ${MAX_TRANSITIONS}).`);
-  }
-  const ids = new Set<string>();
-  const states: AutomatonState[] = obj.states.map((raw, i) => {
-    const s = parseState(raw, i);
-    if (ids.has(s.id)) {
-      throw new Error(`Duplicate state id "${s.id}".`);
-    }
-    ids.add(s.id);
-    return s;
-  });
-  const transitions: AutomatonTransition[] = obj.transitions.map((raw, i) =>
-    parseTransition(raw, i, ids)
-  );
-  return { states, transitions };
-}
-
-function parseState(raw: unknown, i: number): AutomatonState {
-  if (!raw || typeof raw !== 'object') {
-    throw new Error(`State #${i} is not an object.`);
-  }
-  const r = raw as Record<string, unknown>;
-  if (typeof r['id'] !== 'string' || r['id'].length === 0) {
-    throw new Error(`State #${i} has invalid id.`);
-  }
-  if (typeof r['label'] !== 'string' || r['label'].length > MAX_LABEL_LENGTH) {
-    throw new Error(`State "${r['id']}" has invalid label.`);
-  }
-  if (!Number.isFinite(r['x']) || !Number.isFinite(r['y'])) {
-    throw new Error(`State "${r['id']}" has invalid coordinates.`);
-  }
-  return {
-    id: r['id'],
-    label: r['label'],
-    x: r['x'] as number,
-    y: r['y'] as number,
-    isStart: Boolean(r['isStart']),
-    isAccept: Boolean(r['isAccept']),
-  };
-}
-
-function parseTransition(
-  raw: unknown,
-  i: number,
-  validStateIds: Set<string>
-): AutomatonTransition {
-  if (!raw || typeof raw !== 'object') {
-    throw new Error(`Transition #${i} is not an object.`);
-  }
-  const r = raw as Record<string, unknown>;
-  if (typeof r['id'] !== 'string' || r['id'].length === 0) {
-    throw new Error(`Transition #${i} has invalid id.`);
-  }
-  if (typeof r['fromId'] !== 'string' || !validStateIds.has(r['fromId'])) {
-    throw new Error(`Transition "${r['id']}" references unknown fromId.`);
-  }
-  if (typeof r['toId'] !== 'string' || !validStateIds.has(r['toId'])) {
-    throw new Error(`Transition "${r['id']}" references unknown toId.`);
-  }
-  if (!Array.isArray(r['symbols'])) {
-    throw new Error(`Transition "${r['id']}" has invalid symbols.`);
-  }
-  const symbols = r['symbols'].map((s, j) => {
-    if (typeof s !== 'string' || s.length === 0 || s.length > MAX_SYMBOL_LENGTH) {
-      throw new Error(`Transition "${r['id']}" has invalid symbol at index ${j}.`);
-    }
-    return s;
-  });
-  return {
-    id: r['id'],
-    fromId: r['fromId'],
-    toId: r['toId'],
-    symbols,
-  };
 }
 
 export { EPSILON };

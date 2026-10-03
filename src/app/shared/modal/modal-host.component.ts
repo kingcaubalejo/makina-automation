@@ -199,11 +199,19 @@ export class ModalHostComponent implements AfterViewInit {
   protected readonly titleId = `modal-title-${Math.random().toString(36).slice(2, 8)}`;
 
   private previouslyFocused: HTMLElement | null = null;
+  // The effect below tracks modal.state(), which changes on every keystroke
+  // inside a prompt input (setInputValue emits a new state object). Without
+  // this guard, focusInitial() would re-run and call input.select() on every
+  // change, so each typed character replaces the previously typed one.
+  private isOpen = false;
 
   constructor() {
     effect(() => {
       const s = this.modal.state();
-      if (s) {
+      const nowOpen = s !== null;
+      if (nowOpen === this.isOpen) return;
+      this.isOpen = nowOpen;
+      if (nowOpen) {
         this.previouslyFocused = (document.activeElement as HTMLElement) ?? null;
         queueMicrotask(() => this.entered.set(true));
         queueMicrotask(() => this.focusInitial());

@@ -111,3 +111,97 @@ export function nextStateLabel(a: Automaton): string {
 export function uid(prefix = 'id'): string {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
 }
+
+export const MAX_IMPORT_SIZE = 1_000_000;
+export const MAX_STATES = 5000;
+export const MAX_TRANSITIONS = 10_000;
+export const MAX_LABEL_LENGTH = 200;
+export const MAX_SYMBOL_LENGTH = 64;
+
+export function parseAutomaton(value: unknown): Automaton {
+  if (!value || typeof value !== 'object') {
+    throw new Error('Invalid automaton file.');
+  }
+  const obj = value as { states?: unknown; transitions?: unknown };
+  if (!Array.isArray(obj.states) || !Array.isArray(obj.transitions)) {
+    throw new Error('Invalid automaton file.');
+  }
+  if (obj.states.length > MAX_STATES) {
+    throw new Error(`Too many states (max ${MAX_STATES}).`);
+  }
+  if (obj.transitions.length > MAX_TRANSITIONS) {
+    throw new Error(`Too many transitions (max ${MAX_TRANSITIONS}).`);
+  }
+  const ids = new Set<string>();
+  const states: AutomatonState[] = obj.states.map((raw, i) => {
+    const s = parseState(raw, i);
+    if (ids.has(s.id)) {
+      throw new Error(`Duplicate state id "${s.id}".`);
+    }
+    ids.add(s.id);
+    return s;
+  });
+  const transitions: AutomatonTransition[] = obj.transitions.map((raw, i) =>
+    parseTransition(raw, i, ids)
+  );
+  return { states, transitions };
+}
+
+function parseState(raw: unknown, i: number): AutomatonState {
+  if (!raw || typeof raw !== 'object') {
+    throw new Error(`State #${i} is not an object.`);
+  }
+  const r = raw as Record<string, unknown>;
+  if (typeof r['id'] !== 'string' || r['id'].length === 0) {
+    throw new Error(`State #${i} has invalid id.`);
+  }
+  if (typeof r['label'] !== 'string' || r['label'].length > MAX_LABEL_LENGTH) {
+    throw new Error(`State "${r['id']}" has invalid label.`);
+  }
+  if (!Number.isFinite(r['x']) || !Number.isFinite(r['y'])) {
+    throw new Error(`State "${r['id']}" has invalid coordinates.`);
+  }
+  return {
+    id: r['id'],
+    label: r['label'],
+    x: r['x'] as number,
+    y: r['y'] as number,
+    isStart: Boolean(r['isStart']),
+    isAccept: Boolean(r['isAccept']),
+  };
+}
+
+function parseTransition(
+  raw: unknown,
+  i: number,
+  validStateIds: Set<string>
+): AutomatonTransition {
+  if (!raw || typeof raw !== 'object') {
+    throw new Error(`Transition #${i} is not an object.`);
+  }
+  const r = raw as Record<string, unknown>;
+  if (typeof r['id'] !== 'string' || r['id'].length === 0) {
+    throw new Error(`Transition #${i} has invalid id.`);
+  }
+  if (typeof r['fromId'] !== 'string' || !validStateIds.has(r['fromId'])) {
+    throw new Error(`Transition "${r['id']}" references unknown fromId.`);
+  }
+  if (typeof r['toId'] !== 'string' || !validStateIds.has(r['toId'])) {
+    throw new Error(`Transition "${r['id']}" references unknown toId.`);
+  }
+  if (!Array.isArray(r['symbols'])) {
+    throw new Error(`Transition "${r['id']}" has invalid symbols.`);
+  }
+  const symbols = r['symbols'].map((s, j) => {
+    if (typeof s !== 'string' || s.length === 0 || s.length > MAX_SYMBOL_LENGTH) {
+      throw new Error(`Transition "${r['id']}" has invalid symbol at index ${j}.`);
+    }
+    return s;
+  });
+  return {
+    id: r['id'],
+    fromId: r['fromId'],
+    toId: r['toId'],
+    symbols,
+  };
+}
