@@ -1,7 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { EditorStore, Tool } from '../../../core/services/editor-store';
-import { AuthService } from '../../../core/services/auth.service';
-import { WorkspaceService } from '../../../core/services/workspace.service';
 
 interface ToolDef {
   id: Tool;
@@ -36,7 +34,7 @@ interface ToolDef {
             (blur)="onWorkspaceBlur($event)"
             spellcheck="false"
             aria-label="Workspace name"
-            title="Workspace name (rename this window)"
+            title="Workspace name"
           />
         </div>
       </div>
@@ -82,7 +80,7 @@ interface ToolDef {
       </p>
     </div>
 
-    <!-- top-right: actions + account -->
+    <!-- top-right: actions -->
     <div class="cluster top-right">
       <div class="card action-row">
         <button class="ghost" (click)="store.undo()" [disabled]="!store.canUndo()" title="Undo (⌘Z)">
@@ -103,13 +101,6 @@ interface ToolDef {
             <path d="M3 6h18M8 6V4h8v2M5 6l1 14h12l1-14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
           </svg>
         </button>
-        <button class="ghost" (click)="workspaces.openBlankWindow()" title="Open a new workspace in a new window">
-          <svg class="icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-            <rect x="4" y="6" width="14" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.7" />
-            <path d="M14 10h6V4h-6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
-            <path d="M16 6l4 -4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
-          </svg>
-        </button>
         <span class="divider"></span>
         <button class="ghost" (click)="store.toggleTheme()" [title]="'Toggle theme (currently ' + store.theme() + ')'">
           @if (store.theme() === 'dark') {
@@ -124,39 +115,6 @@ interface ToolDef {
           }
         </button>
       </div>
-
-      @if (workspaces.ready() && workspaces.connectionStatus() !== 'local') {
-        <div class="collaborators card" [attr.title]="peerTooltip()">
-          <span class="conn-dot" [class]="'conn-' + workspaces.connectionStatus()"></span>
-          <div class="collaborators-stack">
-            @for (peer of visiblePeers(); track peer.clientId) {
-              <span
-                class="avatar peer-avatar"
-                [style.background]="peer.color"
-                [attr.title]="peer.name"
-              >{{ peer.initials }}</span>
-            }
-            @if (extraPeerCount() > 0) {
-              <span class="avatar peer-avatar peer-extra">+{{ extraPeerCount() }}</span>
-            }
-          </div>
-        </div>
-      }
-
-      @if (auth.isAuthenticated()) {
-        <button class="account-btn card" (click)="auth.logout()" [title]="'Signed in as ' + auth.currentUser()?.email + ' — click to sign out'">
-          <span class="avatar" aria-hidden="true">{{ initials() }}</span>
-          <span class="account-label">Sign out</span>
-        </button>
-      } @else {
-        <button class="account-btn primary card" (click)="auth.openModal()" title="Sign in">
-          <svg class="icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-            <path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
-            <path d="M10 17l5-5-5-5M15 12H3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
-          </svg>
-          <span class="account-label">Sign in</span>
-        </button>
-      }
     </div>
   `,
   styles: [
@@ -315,76 +273,10 @@ interface ToolDef {
         margin: 0 4px;
       }
 
-      /* account button */
-      .account-btn {
-        gap: 8px;
-        padding: 6px 12px;
-        height: 38px;
-        border-radius: 999px;
-        cursor: pointer;
-        font-size: 13px;
-        font-weight: 500;
-        color: var(--text);
-      }
-      .account-btn:hover { background: var(--surface-2); }
-      .account-btn.primary {
-        background: var(--accent);
-        border-color: var(--accent);
-        color: #fff;
-        box-shadow: var(--shadow);
-      }
-      .account-btn.primary:hover { filter: brightness(1.05); background: var(--accent); }
-      .avatar {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: 22px;
-        height: 22px;
-        border-radius: 999px;
-        background: var(--accent-soft);
-        color: var(--accent);
-        font-size: 11px;
-        font-weight: 600;
-        text-transform: uppercase;
-      }
       .icon { width: 16px; height: 16px; display: block; flex-shrink: 0; }
-
-      /* collaborators */
-      .collaborators {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        padding: 6px 10px;
-        height: 38px;
-        border-radius: 999px;
-      }
-      .conn-dot {
-        width: 8px;
-        height: 8px;
-        border-radius: 999px;
-        background: var(--text-muted);
-        transition: background 200ms;
-      }
-      .conn-dot.conn-connected { background: #22c55e; }
-      .conn-dot.conn-connecting { background: #f59e0b; }
-      .conn-dot.conn-disconnected { background: #ef4444; }
-      .collaborators-stack {
-        display: flex;
-        align-items: center;
-      }
-      .peer-avatar {
-        margin-left: -6px;
-        border: 2px solid var(--surface);
-        color: white;
-        font-size: 10px;
-      }
-      .peer-avatar:first-child { margin-left: 0; }
-      .peer-extra { background: var(--surface-2); color: var(--text); }
 
       @media (max-width: 900px) {
         .tool-hint { display: none; }
-        .account-label { display: none; }
-        .account-btn { padding: 6px; width: 38px; height: 38px; justify-content: center; }
       }
       @media (max-width: 620px) {
         .cluster.top-left .brand-text strong { display: none; }
@@ -396,8 +288,6 @@ interface ToolDef {
 })
 export class ToolbarComponent {
   protected readonly store = inject(EditorStore);
-  protected readonly auth = inject(AuthService);
-  protected readonly workspaces = inject(WorkspaceService);
 
   protected readonly tools: ToolDef[] = [
     { id: 'select',     label: 'Select',     hint: 'V' },
@@ -410,39 +300,6 @@ export class ToolbarComponent {
   protected readonly toolHint = computed(() => {
     const active = this.tools.find((t) => t.id === this.store.tool());
     return active?.hint ?? 'V';
-  });
-
-  protected readonly initials = computed(() => {
-    const user = this.auth.currentUser();
-    if (!user) return '?';
-    const f = (user.firstName ?? '').trim()[0] ?? '';
-    const l = (user.lastName ?? '').trim()[0] ?? '';
-    const fallback = (user.email ?? '?').trim()[0] ?? '?';
-    return (f + l) || fallback;
-  });
-
-  private readonly MAX_VISIBLE_PEERS = 3;
-
-  protected readonly visiblePeers = computed(() =>
-    this.workspaces.remotePeers().slice(0, this.MAX_VISIBLE_PEERS),
-  );
-
-  protected readonly extraPeerCount = computed(() =>
-    Math.max(0, this.workspaces.remotePeers().length - this.MAX_VISIBLE_PEERS),
-  );
-
-  protected readonly peerTooltip = computed(() => {
-    const peers = this.workspaces.remotePeers();
-    const status = this.workspaces.connectionStatus();
-    const header = status === 'connected'
-      ? peers.length === 0
-        ? 'Connected — no one else here'
-        : `Connected — ${peers.length} other${peers.length === 1 ? '' : 's'} editing`
-      : status === 'connecting'
-        ? 'Connecting…'
-        : 'Disconnected';
-    if (peers.length === 0) return header;
-    return header + '\n' + peers.map((p) => `• ${p.name}`).join('\n');
   });
 
   protected onWorkspaceInput(ev: Event): void {

@@ -13,7 +13,6 @@ import { DecimalPipe } from '@angular/common';
 import { EditorStore } from '../../../core/services/editor-store';
 import { AutomatonState, AutomatonTransition } from '../../../core/models/automaton';
 import { ModalService } from '../../../shared/modal/modal.service';
-import { PeerPresence, WorkspaceService } from '../../../core/services/workspace.service';
 
 interface RenderedTransition {
   t: AutomatonTransition;
@@ -151,79 +150,9 @@ const ACCEPT_GAP = 4;
           />
         }
 
-        <!-- peer selection rings -->
-        <g class="remote-selections">
-          @for (rs of remoteSelectedStates(); track rs.peer.clientId + ':' + rs.state.id) {
-            <circle
-              [attr.cx]="rs.state.x"
-              [attr.cy]="rs.state.y"
-              [attr.r]="STATE_R + 4"
-              fill="none"
-              [attr.stroke]="rs.peer.color"
-              stroke-width="2"
-              stroke-dasharray="4 3"
-              opacity="0.9"
-            />
-          }
-        </g>
-
-        <!-- peer "editing" badges -->
-        <g class="remote-editing">
-          @for (re of remoteEditingStates(); track re.peer.clientId + ':' + re.state.id) {
-            <g [attr.transform]="'translate(' + re.state.x + ',' + (re.state.y - STATE_R - 12) + ')'">
-              <rect
-                x="-30"
-                y="-11"
-                width="60"
-                height="18"
-                rx="9"
-                [attr.fill]="re.peer.color"
-                opacity="0.95"
-              />
-              <text
-                text-anchor="middle"
-                dy="4"
-                fill="white"
-                font-size="10"
-                font-weight="600"
-              >{{ re.peer.initials }} editing</text>
-            </g>
-          }
-        </g>
-
-        <!-- peer floating cursors -->
-        <g class="remote-cursors">
-          @for (peer of remoteCursors(); track peer.clientId) {
-            <g [attr.transform]="'translate(' + peer.cursor!.x + ',' + peer.cursor!.y + ')'">
-              <path
-                d="M 0 0 L 0 16 L 4 12 L 8 20 L 11 19 L 7 11 L 12 11 Z"
-                [attr.fill]="peer.color"
-                stroke="white"
-                stroke-width="1"
-              />
-              <g transform="translate(14, 18)">
-                <rect
-                  x="0"
-                  y="0"
-                  [attr.width]="peer.name.length * 6.5 + 10"
-                  height="16"
-                  rx="8"
-                  [attr.fill]="peer.color"
-                />
-                <text
-                  x="5"
-                  y="11"
-                  fill="white"
-                  font-size="10"
-                  font-weight="600"
-                >{{ peer.name }}</text>
-              </g>
-            </g>
-          }
-        </g>
       </svg>
 
-      <div class="hud">
+      <div class="hud" (pointerdown)="$event.stopPropagation()" (wheel)="$event.stopPropagation()">
         <button class="hud-btn" (click)="store.tidyLayout()" title="Tidy layout">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <line x1="3" y1="6" x2="21" y2="6"/>
@@ -527,40 +456,7 @@ const ACCEPT_GAP = 4;
 export class CanvasComponent {
   protected readonly store = inject(EditorStore);
   protected readonly modal = inject(ModalService);
-  protected readonly workspaces = inject(WorkspaceService);
   protected readonly host = viewChild.required<ElementRef<HTMLDivElement>>('host');
-
-  protected readonly remotePeers = computed(() => this.workspaces.remotePeers());
-
-  protected readonly remoteSelectedStates = computed(() => {
-    const out: Array<{ peer: PeerPresence; state: AutomatonState }> = [];
-    const stateById = new Map(this.store.states().map((s) => [s.id, s]));
-    for (const peer of this.remotePeers()) {
-      const sel = peer.selection;
-      if (!sel) continue;
-      for (const id of sel.stateIds) {
-        const s = stateById.get(id);
-        if (s) out.push({ peer, state: s });
-      }
-    }
-    return out;
-  });
-
-  protected readonly remoteEditingStates = computed(() => {
-    const out: Array<{ peer: PeerPresence; state: AutomatonState }> = [];
-    const stateById = new Map(this.store.states().map((s) => [s.id, s]));
-    for (const peer of this.remotePeers()) {
-      const ed = peer.editing;
-      if (!ed || ed.kind !== 'state') continue;
-      const s = stateById.get(ed.id);
-      if (s) out.push({ peer, state: s });
-    }
-    return out;
-  });
-
-  protected readonly remoteCursors = computed(() =>
-    this.remotePeers().filter((p) => p.cursor !== undefined && p.cursor !== null),
-  );
 
   protected readonly STATE_R = STATE_R;
   protected readonly ACCEPT_GAP = ACCEPT_GAP;
@@ -809,7 +705,6 @@ export class CanvasComponent {
   protected onCanvasPointerMove(ev: PointerEvent): void {
     const world = this.toWorld(ev);
     this.cursorWorld = world;
-    this.workspaces.publishCursor(world);
 
     if (!this.dragState) {
       if (this.store.transitionDraft()) {
@@ -849,9 +744,7 @@ export class CanvasComponent {
     }
   }
 
-  protected onCanvasPointerLeave(): void {
-    this.workspaces.publishCursor(null);
-  }
+  protected onCanvasPointerLeave(): void {}
 
   protected onCanvasPointerUp(_ev: PointerEvent): void {
     if (!this.dragState) return;
@@ -962,20 +855,10 @@ export class CanvasComponent {
     this.store.toggleSelectTransition(id, ev.shiftKey);
   }
 
-  protected onDoubleClick(ev: MouseEvent): void {
-    if ((ev.target as Element).closest('.state')) return;
-    if ((ev.target as Element).closest('.transition')) {
-      const transitionEl = (ev.target as Element).closest('.transition');
-      if (!transitionEl) return;
-      // not implemented: edit by double-click on transition (handled in panel)
-      return;
-    }
-    const tool = this.store.tool();
-    if (tool !== 'state') {
-      const world = this.toWorld(ev);
-      const created = this.store.addState(world.x, world.y);
-      if (created) this.store.selectOnly([created.id]);
-    }
+  protected onDoubleClick(_ev: MouseEvent): void {
+    // Double-click on the empty canvas no longer adds a state. Pick the
+    // State tool (S) and click to add. Double-click on a state is handled by
+    // onStateDoubleClick (rename).
   }
 
   protected onContextMenu(ev: MouseEvent): void {

@@ -9,9 +9,7 @@ import {
   untracked,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import * as amplitude from '@amplitude/unified';
 import { EditorStore } from '../../core/services/editor-store';
-import { AuthService } from '../../core/services/auth.service';
 import { SimulationResult, simulate } from '../../core/algorithms/simulate';
 
 @Component({
@@ -69,15 +67,15 @@ import { SimulationResult, simulate } from '../../core/algorithms/simulate';
             @for (s of r.steps; track s.index) {
               <div class="step" [class.active]="s.index === cursor()">
                 <span class="idx">{{ s.index }}</span>
-                <span class="consumed">"{{ s.consumed || 'ε' }}"</span>
-                <span class="active-set">{{ activeLabels(s.active) }}</span>
+                <span class="consumed" [title]="s.consumed || 'ε'">"{{ s.consumed || 'ε' }}"</span>
+                <span class="active-set" [title]="activeLabels(s.active)">{{ activeLabels(s.active) }}</span>
               </div>
             }
             @if (r.rejectedAt !== undefined && cursor() >= r.rejectedAt) {
               <div class="step rejected">
                 <span class="idx">·</span>
                 <span class="consumed">stuck</span>
-                <span class="active-set">no transition on "{{ chars()[r.rejectedAt - 1] }}"</span>
+                <span class="active-set" [title]="'no transition on ' + chars()[r.rejectedAt - 1]">no transition on "{{ chars()[r.rejectedAt - 1] }}"</span>
               </div>
             }
           </div>
@@ -183,7 +181,7 @@ import { SimulationResult, simulate } from '../../core/algorithms/simulate';
       }
       .step {
         display: grid;
-        grid-template-columns: 30px 80px 1fr;
+        grid-template-columns: 30px minmax(0, 1.4fr) minmax(0, 1fr);
         gap: 8px;
         align-items: center;
         padding: 6px 10px;
@@ -194,8 +192,20 @@ import { SimulationResult, simulate } from '../../core/algorithms/simulate';
       .step.active { background: var(--accent-soft); color: var(--accent); }
       .step.rejected { color: var(--danger); }
       .step .idx { font-family: ui-monospace, "SF Mono", Menlo, monospace; color: var(--text-muted); }
-      .step .consumed { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
-      .step .active-set { color: var(--text-muted); }
+      .step .consumed {
+        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        min-width: 0;
+      }
+      .step .active-set {
+        color: var(--text-muted);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        min-width: 0;
+      }
       .step.active .active-set { color: var(--accent); }
 
       .verdict {
@@ -226,7 +236,6 @@ import { SimulationResult, simulate } from '../../core/algorithms/simulate';
 })
 export class SimulationPanelComponent implements OnDestroy {
   protected readonly store = inject(EditorStore);
-  private readonly auth = inject(AuthService);
 
   protected readonly cursor = signal(0);
   protected readonly running = signal(false);
@@ -303,24 +312,13 @@ export class SimulationPanelComponent implements OnDestroy {
   }
 
   protected reset(): void {
-    amplitude.track('Reset Simulation', {
-      input: this.store.simulationInput(),
-      cursor_position: this.cursor(),
-      was_running: this.running(),
-    });
     this.cursor.set(0);
     this.running.set(false);
     this.started.set(false);
     this.clearTimer();
   }
 
-  protected async onStepClick(): Promise<void> {
-    const ok = await this.auth.verifySession();
-    if (!ok) return;
-    amplitude.track('Stepped Simulation', {
-      input: this.store.simulationInput(),
-      from_position: this.cursor(),
-    });
+  protected onStepClick(): void {
     this.step();
   }
 
@@ -333,39 +331,19 @@ export class SimulationPanelComponent implements OnDestroy {
     if (next >= r.steps.length - 1) {
       this.running.set(false);
       this.clearTimer();
-      amplitude.track('Simulation Finished', {
-        input: this.store.simulationInput(),
-        input_length: this.store.simulationInput().length,
-        states_count: this.store.states().length,
-        accepted: r.accepted,
-        total_steps: r.steps.length,
-      });
     }
   }
 
-  protected async toggleRun(): Promise<void> {
+  protected toggleRun(): void {
     if (this.running()) {
       this.running.set(false);
       this.clearTimer();
-      amplitude.track('Paused Simulation', {
-        input: this.store.simulationInput(),
-        cursor_position: this.cursor(),
-      });
       return;
     }
     if (!this.canRun()) return;
-    const ok = await this.auth.verifySession();
-    if (!ok) return;
     if (this.atEnd()) this.cursor.set(0);
     this.started.set(true);
     this.running.set(true);
-    const r = this.result();
-    amplitude.track('Ran Simulation', {
-      input: this.store.simulationInput(),
-      input_length: this.store.simulationInput().length,
-      states_count: this.store.states().length,
-      accepted: r?.accepted ?? null,
-    });
     this.timer = setInterval(() => {
       if (!this.canStep()) {
         this.running.set(false);

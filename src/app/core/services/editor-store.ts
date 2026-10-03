@@ -1,5 +1,4 @@
 import { computed, effect, Injectable, NgZone, inject, signal } from '@angular/core';
-import * as Y from 'yjs';
 import {
   alphabetOf,
   Automaton,
@@ -15,7 +14,6 @@ import {
   validate,
 } from '../models/automaton';
 import { autoLayout } from '../algorithms/auto-layout';
-import { bindMapToSignal, bindTextToSignal, replaceText } from './yjs-bridge';
 
 export type Tool = 'select' | 'state' | 'transition' | 'pan' | 'erase';
 
@@ -32,23 +30,25 @@ export interface Viewport {
 
 const STORAGE_PREFIX = 'makina';
 const THEME_STORAGE_KEY = 'makina:theme';
+const DOC_STORAGE_KEY = 'makina:doc:v1';
+const UNDO_LIMIT = 100;
+const COALESCE_MS = 500;
+const PERSIST_DEBOUNCE_MS = 300;
 
-/**
- * Symbol used as the Y.js transaction origin for all local edits. The
- * WorkspaceService creates the Y.UndoManager with this origin in its
- * trackedOrigins set so undo only reverts this user's edits.
- */
-export const LOCAL_ORIGIN: unique symbol = Symbol('editor-local-origin');
+interface DocSnapshot {
+  states: AutomatonState[];
+  transitions: AutomatonTransition[];
+  workspaceName: string;
+}
 
-interface UndoMeta {
-  selection: Selection;
+interface PersistedDoc extends DocSnapshot {
+  version: 1;
 }
 
 @Injectable({ providedIn: 'root' })
 export class EditorStore {
   private readonly zone = inject(NgZone);
 
-  // Per-user local state — not part of the shared Y.Doc.
   readonly tool = signal<Tool>('select');
   readonly selection = signal<Selection>({ stateIds: [], transitionIds: [] });
   readonly viewport = signal<Viewport>({ x: 0, y: 0, scale: 1 });
@@ -57,13 +57,10 @@ export class EditorStore {
   readonly theme = signal<'light' | 'dark'>(this.readInitialTheme());
   readonly simulationInput = signal<string>('');
 
-  // Y.Doc-backed state — updated by observers after bind().
   readonly states = signal<AutomatonState[]>([]);
   readonly transitions = signal<AutomatonTransition[]>([]);
   readonly workspaceName = signal<string>('Untitled');
 
-  // Increments each time the doc transitions from non-empty to empty. Simulation
-  // panels subscribe to this and reset their local cursor / running state.
   readonly documentReset = signal(0);
 
   readonly undoAvailable = signal(false);
@@ -85,16 +82,15 @@ export class EditorStore {
     return this.transitions().filter((t) => ids.has(t.id));
   });
 
-  private ydoc: Y.Doc | null = null;
-  private yStates: Y.Map<Y.Map<unknown>> | null = null;
-  private yTransitions: Y.Map<Y.Map<unknown>> | null = null;
-  private yMeta: Y.Map<unknown> | null = null;
-  private yWorkspaceName: Y.Text | null = null;
-  private undoManager: Y.UndoManager | null = null;
-  private disposers: Array<() => void> = [];
-  private workspaceIdSignal = signal<string | null>(null);
+  private undoStack: DocSnapshot[] = [];
+  private redoStack: DocSnapshot[] = [];
+  private lastCoalesceKey: string | null = null;
+  private lastCommitAt = 0;
+  private persistTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor() {
+    this.loadFromStorage();
+
     effect(() => {
       const t = this.theme();
       if (typeof document !== 'undefined') {
@@ -112,150 +108,21 @@ export class EditorStore {
         document.title = `${name} · Makina`;
       }
     });
-  }
-
-  /**
-   * WorkspaceService calls this after opening a workspace's providers. Takes
-   * ownership of the Y.Doc + UndoManager for the lifetime of that workspace.
-   */
-  bind(ydoc: Y.Doc, undoManager: Y.UndoManager, workspaceId: string): void {
-    if (this.ydoc) this.unbind();
-    this.ydoc = ydoc;
-    this.yStates = ydoc.getMap('states') as Y.Map<Y.Map<unknown>>;
-    this.yTransitions = ydoc.getMap('transitions') as Y.Map<Y.Map<unknown>>;
-    this.yMeta = ydoc.getMap('meta');
-    this.yWorkspaceName = ydoc.getText('workspaceName');
-    this.undoManager = undoManager;
-    this.workspaceIdSignal.set(workspaceId);
-
-    const yStates = this.yStates;
-    const yTransitions = this.yTransitions;
-    const yMeta = this.yMeta;
-
-    const rebuildStates = () => {
-      const startId = yMeta.get('startId') as string | null;
-      const out: AutomatonState[] = [];
-      yStates.forEach((entry, id) => {
-        out.push({
-          id,
-          label: (entry.get('label') as string) ?? '',
-          x: Number(entry.get('x') ?? 0),
-          y: Number(entry.get('y') ?? 0),
-          isStart: startId === id,
-          isAccept: Boolean(entry.get('isAccept')),
-        });
-      });
-      this.zone.run(() => this.states.set(out));
-    };
-    yStates.observeDeep(rebuildStates);
-    const metaHandler = (event: Y.YMapEvent<unknown>) => {
-      if (event.keysChanged.has('startId')) rebuildStates();
-    };
-    yMeta.observe(metaHandler);
-    rebuildStates();
-    this.disposers.push(() => {
-      yStates.unobserveDeep(rebuildStates);
-      yMeta.unobserve(metaHandler);
-    });
-
-    this.disposers.push(
-      bindMapToSignal<AutomatonTransition>(
-        yTransitions,
-        this.transitions,
-        (id, entry) => {
-          const symbols = entry.get('symbols');
-          const symArr: string[] =
-            symbols instanceof Y.Array ? (symbols.toArray() as string[]) : [];
-          return {
-            id,
-            fromId: (entry.get('fromId') as string) ?? '',
-            toId: (entry.get('toId') as string) ?? '',
-            symbols: symArr,
-          };
-        },
-        this.zone,
-      ),
-    );
-
-    this.disposers.push(bindTextToSignal(this.yWorkspaceName, this.workspaceName, this.zone));
-
-    // Undo stack management: capture selection alongside each committed edit
-    // and filter restored selections against the current Y state on pop.
-    const onStackAdded = (e: { stackItem: { meta: Map<unknown, unknown> } }) => {
-      const meta: UndoMeta = { selection: this.selection() };
-      e.stackItem.meta.set('selection', meta.selection);
-      this.updateUndoState();
-    };
-    const onStackPopped = (e: { stackItem: { meta: Map<unknown, unknown> } }) => {
-      const sel = e.stackItem.meta.get('selection') as Selection | undefined;
-      if (sel) {
-        const restored: Selection = {
-          stateIds: sel.stateIds.filter((id) => yStates.has(id)),
-          transitionIds: sel.transitionIds.filter((id) => yTransitions.has(id)),
-        };
-        this.zone.run(() => this.selection.set(restored));
-      }
-      this.updateUndoState();
-    };
-    undoManager.on('stack-item-added', onStackAdded);
-    undoManager.on('stack-item-popped', onStackPopped);
-    this.disposers.push(() => {
-      undoManager.off('stack-item-added', onStackAdded);
-      undoManager.off('stack-item-popped', onStackPopped);
-    });
-
-    // Track non-empty → empty transitions so simulation panels can reset.
-    let wasNonEmpty = yStates.size > 0;
-    const detectReset = () => {
-      const nowEmpty = yStates.size === 0;
-      if (wasNonEmpty && nowEmpty) {
-        this.zone.run(() => this.documentReset.update((n) => n + 1));
-      }
-      wasNonEmpty = !nowEmpty;
-    };
-    yStates.observe(detectReset);
-    this.disposers.push(() => yStates.unobserve(detectReset));
-
-    this.updateUndoState();
-  }
-
-  unbind(): void {
-    for (const d of this.disposers) d();
-    this.disposers = [];
-    this.ydoc = null;
-    this.yStates = null;
-    this.yTransitions = null;
-    this.yMeta = null;
-    this.yWorkspaceName = null;
-    this.undoManager = null;
-    this.workspaceIdSignal.set(null);
-    this.states.set([]);
-    this.transitions.set([]);
-    this.workspaceName.set('Untitled');
-    this.selection.set({ stateIds: [], transitionIds: [] });
-    this.activeStates.set(new Set());
-    this.transitionDraft.set(null);
-    this.simulationInput.set('');
-    this.updateUndoState();
-  }
-
-  private updateUndoState(): void {
-    const um = this.undoManager;
-    const undo = um ? um.undoStack.length > 0 : false;
-    const redo = um ? um.redoStack.length > 0 : false;
-    this.zone.run(() => {
-      this.undoAvailable.set(undo);
-      this.redoAvailable.set(redo);
+    effect(() => {
+      // Watch all persisted fields so any change schedules a save.
+      this.states();
+      this.transitions();
+      this.workspaceName();
+      this.schedulePersist();
     });
   }
 
-  workspaceId(): string | null {
-    return this.workspaceIdSignal();
+  workspaceId(): string {
+    return 'local';
   }
 
   workspaceStorageKey(suffix: string): string {
-    const id = this.workspaceIdSignal() ?? 'unbound';
-    return `${STORAGE_PREFIX}:${suffix}:${id}`;
+    return `${STORAGE_PREFIX}:${suffix}:local`;
   }
 
   private readInitialTheme(): 'light' | 'dark' {
@@ -270,6 +137,126 @@ export class EditorStore {
       return 'dark';
     }
     return 'light';
+  }
+
+  private loadFromStorage(): void {
+    if (typeof localStorage === 'undefined') return;
+    let raw: string | null = null;
+    try {
+      raw = localStorage.getItem(DOC_STORAGE_KEY);
+    } catch {
+      return;
+    }
+    if (!raw) return;
+    try {
+      const parsed = JSON.parse(raw) as PersistedDoc;
+      if (parsed?.version !== 1) return;
+      const auto = parseAutomaton({ states: parsed.states, transitions: parsed.transitions });
+      this.states.set(auto.states);
+      this.transitions.set(auto.transitions);
+      if (typeof parsed.workspaceName === 'string' && parsed.workspaceName.trim()) {
+        this.workspaceName.set(parsed.workspaceName);
+      }
+    } catch {
+      // corrupt — ignore and start fresh
+    }
+  }
+
+  private schedulePersist(): void {
+    if (typeof localStorage === 'undefined') return;
+    if (this.persistTimer) clearTimeout(this.persistTimer);
+    this.persistTimer = setTimeout(() => this.flushPersist(), PERSIST_DEBOUNCE_MS);
+  }
+
+  private flushPersist(): void {
+    this.persistTimer = null;
+    try {
+      const payload: PersistedDoc = {
+        version: 1,
+        states: this.states(),
+        transitions: this.transitions(),
+        workspaceName: this.workspaceName(),
+      };
+      localStorage.setItem(DOC_STORAGE_KEY, JSON.stringify(payload));
+    } catch {
+      // ignore quota
+    }
+  }
+
+  private snapshot(): DocSnapshot {
+    return {
+      states: this.states().map((s) => ({ ...s })),
+      transitions: this.transitions().map((t) => ({ ...t, symbols: [...t.symbols] })),
+      workspaceName: this.workspaceName(),
+    };
+  }
+
+  private restore(snap: DocSnapshot): void {
+    this.zone.run(() => {
+      this.states.set(snap.states.map((s) => ({ ...s })));
+      this.transitions.set(snap.transitions.map((t) => ({ ...t, symbols: [...t.symbols] })));
+      this.workspaceName.set(snap.workspaceName);
+      const liveStateIds = new Set(snap.states.map((s) => s.id));
+      const liveTransitionIds = new Set(snap.transitions.map((t) => t.id));
+      const sel = this.selection();
+      this.selection.set({
+        stateIds: sel.stateIds.filter((id) => liveStateIds.has(id)),
+        transitionIds: sel.transitionIds.filter((id) => liveTransitionIds.has(id)),
+      });
+      this.activeStates.set(new Set());
+      this.transitionDraft.set(null);
+    });
+  }
+
+  private commit(coalesceKey?: string): void {
+    const now = Date.now();
+    if (
+      coalesceKey &&
+      this.lastCoalesceKey === coalesceKey &&
+      now - this.lastCommitAt < COALESCE_MS
+    ) {
+      this.lastCommitAt = now;
+      return;
+    }
+    this.undoStack.push(this.snapshot());
+    if (this.undoStack.length > UNDO_LIMIT) this.undoStack.shift();
+    this.redoStack = [];
+    this.lastCommitAt = now;
+    this.lastCoalesceKey = coalesceKey ?? null;
+    this.updateUndoState();
+  }
+
+  private updateUndoState(): void {
+    this.zone.run(() => {
+      this.undoAvailable.set(this.undoStack.length > 0);
+      this.redoAvailable.set(this.redoStack.length > 0);
+    });
+  }
+
+  undo(): void {
+    const prev = this.undoStack.pop();
+    if (!prev) return;
+    this.redoStack.push(this.snapshot());
+    this.restore(prev);
+    this.lastCoalesceKey = null;
+    this.updateUndoState();
+  }
+
+  redo(): void {
+    const next = this.redoStack.pop();
+    if (!next) return;
+    this.undoStack.push(this.snapshot());
+    this.restore(next);
+    this.lastCoalesceKey = null;
+    this.updateUndoState();
+  }
+
+  canUndo(): boolean {
+    return this.undoAvailable();
+  }
+
+  canRedo(): boolean {
+    return this.redoAvailable();
   }
 
   setTool(tool: Tool): void {
@@ -346,82 +333,69 @@ export class EditorStore {
   }
 
   addState(x: number, y: number): AutomatonState | null {
-    if (!this.ydoc || !this.yStates || !this.yMeta) return null;
-    const yStates = this.yStates;
-    const yMeta = this.yMeta;
-    const isFirst = yStates.size === 0;
+    this.commit();
+    const isFirst = this.states().length === 0;
     const id = uid('s');
     const label = nextStateLabel(this.automaton());
-    this.ydoc.transact(() => {
-      const s = new Y.Map<unknown>();
-      s.set('label', label);
-      s.set('x', x);
-      s.set('y', y);
-      s.set('isAccept', false);
-      yStates.set(id, s);
-      if (isFirst) yMeta.set('startId', id);
-    }, LOCAL_ORIGIN);
-    return { id, label, x, y, isStart: isFirst, isAccept: false };
+    const state: AutomatonState = {
+      id,
+      label,
+      x,
+      y,
+      isStart: isFirst,
+      isAccept: false,
+    };
+    this.states.update((cur) => [...cur, state]);
+    return state;
   }
 
   moveState(id: StateId, x: number, y: number, _snapshot = false): void {
-    if (!this.ydoc || !this.yStates) return;
-    const s = this.yStates.get(id);
-    if (!s) return;
-    this.ydoc.transact(() => {
-      s.set('x', x);
-      s.set('y', y);
-    }, LOCAL_ORIGIN);
+    this.commit(`move:${id}`);
+    this.states.update((cur) =>
+      cur.map((s) => (s.id === id ? { ...s, x, y } : s)),
+    );
   }
 
   deleteSelected(): void {
-    if (!this.ydoc || !this.yStates || !this.yTransitions || !this.yMeta) return;
     const sel = this.selection();
     if (!sel.stateIds.length && !sel.transitionIds.length) return;
-    const yStates = this.yStates;
-    const yTransitions = this.yTransitions;
-    const yMeta = this.yMeta;
+    this.commit();
     const stateIds = new Set(sel.stateIds);
     const transIds = new Set(sel.transitionIds);
-    this.ydoc.transact(() => {
-      const startId = yMeta.get('startId') as string | null;
-      if (startId && stateIds.has(startId)) {
-        yMeta.set('startId', null);
-      }
-      for (const id of stateIds) yStates.delete(id);
-      const toDelete: string[] = [];
-      yTransitions.forEach((t, id) => {
-        const from = t.get('fromId') as string;
-        const to = t.get('toId') as string;
-        if (transIds.has(id) || stateIds.has(from) || stateIds.has(to)) {
-          toDelete.push(id);
-        }
-      });
-      for (const id of toDelete) yTransitions.delete(id);
-    }, LOCAL_ORIGIN);
+    const hadStates = this.states().length > 0;
+    this.states.update((cur) =>
+      cur.map((s) => (stateIds.has(s.id) && s.isStart ? { ...s, isStart: false } : s))
+        .filter((s) => !stateIds.has(s.id)),
+    );
+    this.transitions.update((cur) =>
+      cur.filter((t) => !transIds.has(t.id) && !stateIds.has(t.fromId) && !stateIds.has(t.toId)),
+    );
+    if (hadStates && this.states().length === 0) {
+      this.documentReset.update((n) => n + 1);
+    }
     this.clearSelection();
   }
 
   setStateLabel(id: StateId, label: string): void {
-    if (!this.ydoc || !this.yStates) return;
-    const s = this.yStates.get(id);
-    if (!s) return;
-    this.ydoc.transact(() => s.set('label', label), LOCAL_ORIGIN);
+    this.commit(`label:${id}`);
+    this.states.update((cur) => cur.map((s) => (s.id === id ? { ...s, label } : s)));
   }
 
   setStart(id: StateId): void {
-    if (!this.ydoc || !this.yStates || !this.yMeta) return;
-    if (!this.yStates.has(id)) return;
-    const yMeta = this.yMeta;
-    this.ydoc.transact(() => yMeta.set('startId', id), LOCAL_ORIGIN);
+    if (!this.states().some((s) => s.id === id)) return;
+    this.commit();
+    this.states.update((cur) =>
+      cur.map((s) => ({ ...s, isStart: s.id === id })),
+    );
   }
 
   toggleAccept(id: StateId): void {
-    if (!this.ydoc || !this.yStates) return;
-    const s = this.yStates.get(id);
-    if (!s) return;
-    const next = !Boolean(s.get('isAccept'));
-    this.ydoc.transact(() => s.set('isAccept', next), LOCAL_ORIGIN);
+    const target = this.states().find((s) => s.id === id);
+    if (!target) return;
+    this.commit();
+    this.states.update((cur) =>
+      cur.map((s) => (s.id === id ? { ...s, isAccept: !s.isAccept } : s)),
+    );
   }
 
   beginTransition(fromId: StateId): void {
@@ -433,132 +407,104 @@ export class EditorStore {
   }
 
   completeTransition(toId: StateId, symbols: string[] = ['a']): AutomatonTransition | null {
-    if (!this.ydoc || !this.yTransitions) return null;
     const draft = this.transitionDraft();
     if (!draft) return null;
-    const cleaned = symbols.length ? symbols : ['a'];
-    const yTransitions = this.yTransitions;
+    const cleaned = unique((symbols.length ? symbols : ['a']).filter((s) => s.length > 0));
+    if (cleaned.length === 0) {
+      this.transitionDraft.set(null);
+      return null;
+    }
 
-    let existingId: string | null = null;
-    yTransitions.forEach((t, tid) => {
-      if (t.get('fromId') === draft.fromId && t.get('toId') === toId) existingId = tid;
-    });
+    this.commit();
+    const existing = this.transitions().find(
+      (t) => t.fromId === draft.fromId && t.toId === toId,
+    );
 
-    let result: AutomatonTransition | null = null;
-    this.ydoc.transact(() => {
-      if (existingId) {
-        const t = yTransitions.get(existingId)!;
-        const symArr = t.get('symbols') as Y.Array<string>;
-        const currentSet = new Set(symArr.toArray());
-        const toAdd = cleaned.filter((s) => !currentSet.has(s));
-        if (toAdd.length) symArr.push(toAdd);
-        result = {
-          id: existingId,
-          fromId: draft.fromId,
-          toId,
-          symbols: symArr.toArray(),
-        };
-      } else {
-        const id = uid('t');
-        const t = new Y.Map<unknown>();
-        t.set('fromId', draft.fromId);
-        t.set('toId', toId);
-        const symArr = new Y.Array<string>();
-        symArr.push([...cleaned]);
-        t.set('symbols', symArr);
-        yTransitions.set(id, t);
-        result = { id, fromId: draft.fromId, toId, symbols: [...cleaned] };
-      }
-    }, LOCAL_ORIGIN);
+    let result: AutomatonTransition;
+    if (existing) {
+      const merged = unique([...existing.symbols, ...cleaned]);
+      result = { ...existing, symbols: merged };
+      this.transitions.update((cur) =>
+        cur.map((t) => (t.id === existing.id ? result : t)),
+      );
+    } else {
+      result = {
+        id: uid('t'),
+        fromId: draft.fromId,
+        toId,
+        symbols: cleaned,
+      };
+      this.transitions.update((cur) => [...cur, result]);
+    }
     this.transitionDraft.set(null);
     return result;
   }
 
   setTransitionSymbols(id: TransitionId, symbols: string[]): void {
-    if (!this.ydoc || !this.yTransitions) return;
-    const t = this.yTransitions.get(id);
-    if (!t) return;
-    const yTransitions = this.yTransitions;
+    const target = this.transitions().find((t) => t.id === id);
+    if (!target) return;
     const cleaned = unique(symbols.filter((s) => s.length > 0));
-    this.ydoc.transact(() => {
-      if (cleaned.length === 0) {
-        yTransitions.delete(id);
-        return;
-      }
-      const symArr = t.get('symbols') as Y.Array<string>;
-      symArr.delete(0, symArr.length);
-      symArr.push(cleaned);
-    }, LOCAL_ORIGIN);
+    this.commit(`transition-symbols:${id}`);
     if (cleaned.length === 0) {
+      this.transitions.update((cur) => cur.filter((t) => t.id !== id));
       this.selection.update((cur) => ({
         stateIds: cur.stateIds,
         transitionIds: cur.transitionIds.filter((x) => x !== id),
       }));
+      return;
     }
+    this.transitions.update((cur) =>
+      cur.map((t) => (t.id === id ? { ...t, symbols: cleaned } : t)),
+    );
   }
 
   loadAutomaton(a: Automaton, _replaceHistory = false): void {
-    if (!this.ydoc || !this.yStates || !this.yTransitions || !this.yMeta) return;
-    const yStates = this.yStates;
-    const yTransitions = this.yTransitions;
-    const yMeta = this.yMeta;
-    this.ydoc.transact(() => {
-      yStates.clear();
-      yTransitions.clear();
-      let startId: string | null = null;
-      for (const s of a.states) {
-        const y = new Y.Map<unknown>();
-        y.set('label', s.label);
-        y.set('x', s.x);
-        y.set('y', s.y);
-        y.set('isAccept', s.isAccept);
-        yStates.set(s.id, y);
-        if (s.isStart) startId = s.id;
+    this.commit();
+    const states = a.states.map((s) => ({ ...s }));
+    if (states.length > 0) {
+      // Translate so the bbox is centered past the ~316px inspector overlay.
+      // Without this, loaded automata that use small world coordinates
+      // (e.g. a 1-state DFA at (200, 320)) render underneath the inspector
+      // and the canvas appears empty.
+      const xs = states.map((s) => s.x);
+      const ys = states.map((s) => s.y);
+      const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+      const cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+      const dx = 640 - cx;
+      const dy = 400 - cy;
+      for (const s of states) {
+        s.x += dx;
+        s.y += dy;
       }
-      yMeta.set('startId', startId);
-      for (const t of a.transitions) {
-        const y = new Y.Map<unknown>();
-        y.set('fromId', t.fromId);
-        y.set('toId', t.toId);
-        const arr = new Y.Array<string>();
-        arr.push([...t.symbols]);
-        y.set('symbols', arr);
-        yTransitions.set(t.id, y);
-      }
-    }, LOCAL_ORIGIN);
+    }
+    this.states.set(states);
+    this.transitions.set(a.transitions.map((t) => ({ ...t, symbols: [...t.symbols] })));
     this.clearSelection();
     this.activeStates.set(new Set());
   }
 
   clear(): void {
-    if (!this.ydoc || !this.yStates || !this.yTransitions || !this.yMeta) return;
-    const yStates = this.yStates;
-    const yTransitions = this.yTransitions;
-    const yMeta = this.yMeta;
-    this.ydoc.transact(() => {
-      yStates.clear();
-      yTransitions.clear();
-      yMeta.set('startId', null);
-    }, LOCAL_ORIGIN);
+    const hadStates = this.states().length > 0;
+    this.commit();
+    this.states.set([]);
+    this.transitions.set([]);
     this.clearSelection();
     this.activeStates.set(new Set());
     this.simulationInput.set('');
+    if (hadStates) this.documentReset.update((n) => n + 1);
   }
 
   tidyLayout(): void {
-    if (!this.ydoc || !this.yStates) return;
-    if (this.yStates.size === 0) return;
-    const yStates = this.yStates;
+    if (this.states().length === 0) return;
     const laid = autoLayout(this.automaton());
-    this.ydoc.transact(() => {
-      for (const s of laid.states) {
-        const entry = yStates.get(s.id);
-        if (entry) {
-          entry.set('x', s.x);
-          entry.set('y', s.y);
-        }
-      }
-    }, LOCAL_ORIGIN);
+    this.commit();
+    const posById = new Map(laid.states.map((s) => [s.id, { x: s.x, y: s.y }]));
+    this.states.update((cur) =>
+      cur.map((s) => {
+        const pos = posById.get(s.id);
+        return pos ? { ...s, x: pos.x, y: pos.y } : s;
+      }),
+    );
   }
 
   setActiveStates(ids: Iterable<StateId>): void {
@@ -570,9 +516,10 @@ export class EditorStore {
   }
 
   setWorkspaceName(name: string): void {
-    if (!this.yWorkspaceName) return;
     const trimmed = name.trim() || 'Untitled';
-    replaceText(this.yWorkspaceName, trimmed);
+    if (trimmed === this.workspaceName()) return;
+    this.commit('workspace-name');
+    this.workspaceName.set(trimmed);
   }
 
   exportJson(): string {
@@ -594,22 +541,6 @@ export class EditorStore {
         : parsed;
     const auto = parseAutomaton(candidate);
     this.loadAutomaton(auto, true);
-  }
-
-  undo(): void {
-    this.undoManager?.undo();
-  }
-
-  redo(): void {
-    this.undoManager?.redo();
-  }
-
-  canUndo(): boolean {
-    return this.undoAvailable();
-  }
-
-  canRedo(): boolean {
-    return this.redoAvailable();
   }
 }
 

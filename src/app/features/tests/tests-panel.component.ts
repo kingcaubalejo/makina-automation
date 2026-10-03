@@ -41,8 +41,9 @@ const PERSIST_DEBOUNCE_MS = 250;
           </span>
         </div>
         <p class="desc">
-          Add input strings with their expected verdict. Hit
-          <strong>Run all</strong> to check the current automaton against the suite.
+          Add input strings with their expected verdict. Each row re-runs
+          automatically whenever the automaton or inputs change — the row's
+          dot turns green on pass, red on fail.
         </p>
 
         <div class="rows">
@@ -139,7 +140,7 @@ const PERSIST_DEBOUNCE_MS = 250;
       .rows { display: flex; flex-direction: column; gap: 4px; }
       .row {
         display: grid;
-        grid-template-columns: 14px 1fr 80px 60px 22px;
+        grid-template-columns: 14px minmax(0, 1fr) 72px 56px 22px;
         gap: 6px;
         align-items: center;
         padding: 6px 8px;
@@ -147,6 +148,7 @@ const PERSIST_DEBOUNCE_MS = 250;
         border: 1px solid var(--border);
         border-radius: 8px;
       }
+      .row .input, .row .expected { min-width: 0; }
       .row.pass { border-color: color-mix(in srgb, var(--success) 50%, var(--border)); }
       .row.fail { border-color: color-mix(in srgb, var(--danger) 50%, var(--border)); }
       .dot {
